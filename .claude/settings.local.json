@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: rkpyimg project structure\n\n- Add core modules: header, ini_parser, checksum\n- Add tool implementations: boot_merger, trust_merger, loaderimage\n- Add image modules: partition, builder\n- Add CLI framework\n- Add project configuration and documentation\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(python -m pytest:*)"
+    ]
+  }
+}
