@@ -45,6 +45,7 @@ from pathlib import Path
 
 from rkpyimg.core.checksum import crc32_rk
 from rkpyimg.core.ini_parser import BinaryEntry, RKBootConfig
+from rkpyimg.core.rc4 import rc4_decrypt, rc4_decrypt_blocks, rc4_encrypt, rc4_encrypt_blocks
 
 
 # Constants
@@ -665,17 +666,17 @@ class BootMerger:
 
         padded_data = data.ljust(aligned_size, b'\x00')
 
-        # TODO: RC4 encryption if enabled
-        # if self.enable_rc4:
-        #     if fix:
-        #         # Block encryption (512-byte blocks)
-        #         encrypted_data = self._rc4_encrypt_blocks(padded_data, SMALL_PACKET)
-        #     else:
-        #         # Whole encryption
-        #         encrypted_data = self._rc4_encrypt(padded_data)
-        #     f.write(encrypted_data)
-        # else:
-        f.write(padded_data)
+        # RC4 encryption if enabled
+        if self.enable_rc4:
+            if fix:
+                # Block encryption (512-byte blocks for loader data)
+                encrypted_data = rc4_encrypt_blocks(padded_data, SMALL_PACKET)
+            else:
+                # Whole encryption (for CODE471/CODE472 data)
+                encrypted_data = rc4_encrypt(padded_data)
+            f.write(encrypted_data)
+        else:
+            f.write(padded_data)
 
     def unpack(self, input_path: str | Path, output_dir: str | Path) -> None:
         """
@@ -718,12 +719,14 @@ class BootMerger:
                 f.seek(entry.data_offset)
                 data = f.read(entry.data_size)
 
-                # TODO: RC4 decryption if needed
-                # if header.rc4_flag == 0:  # RC4 enabled
-                #     if entry.entry_type == RKEntryType.ENTRY_LOADER:
-                #         data = self._rc4_decrypt_blocks(data, SMALL_PACKET)
-                #     else:
-                #         data = self._rc4_decrypt(data)
+                # RC4 decryption if needed
+                if header.rc4_flag == 0:  # RC4 enabled (0=enabled, 1=disabled)
+                    if entry.entry_type == RKEntryType.ENTRY_LOADER:
+                        # Block decryption for loader data
+                        data = rc4_decrypt_blocks(data, SMALL_PACKET)
+                    else:
+                        # Whole decryption for CODE471/CODE472 data
+                        data = rc4_decrypt(data)
 
                 # Write extracted data
                 with open(output_file, "wb") as out_f:

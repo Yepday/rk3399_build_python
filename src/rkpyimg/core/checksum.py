@@ -9,6 +9,7 @@ from the C source code.
 from __future__ import annotations
 
 import binascii
+import hashlib
 
 
 def crc32_rk(data: bytes) -> int:
@@ -60,3 +61,22 @@ def verify_crc(data: bytes, expected_crc: int) -> bool:
         True if CRC matches
     """
     return crc32_rk(data) == expected_crc
+
+
+def sha256_hash(data: bytes) -> bytes:
+    """
+    Calculate SHA256 hash for trust image components.
+
+    Args:
+        data: Binary data to hash
+
+    Returns:
+        32-byte SHA256 hash digest
+
+    Example:
+        >>> data = b"test data"
+        >>> hash_value = sha256_hash(data)
+        >>> len(hash_value)
+        32
+    """
+    return hashlib.sha256(data).digest()
