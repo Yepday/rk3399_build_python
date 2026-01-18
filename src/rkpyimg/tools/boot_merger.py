@@ -190,7 +190,7 @@ class RKBootHeader:
 
         # Pack header fields (without reserved)
         header = struct.pack(
-            "<IHIIHBBBBBIBBIBBIBBB",
+            "<IHIIHBBBBBIBIBBIBBIBBB",
             self.tag,
             self.HEADER_SIZE,
             self.version,
@@ -227,7 +227,7 @@ class RKBootHeader:
             raise ValueError(f"Data too short: {len(data)} < {cls.HEADER_SIZE}")
 
         # Unpack header fields
-        fields = struct.unpack("<IHIIHBBBBBIBBIBBIBBB", data[:45])
+        fields = struct.unpack("<IHIIHBBBBBIBIBBIBBIBBB", data[:45])
 
         return cls(
             tag=fields[0],

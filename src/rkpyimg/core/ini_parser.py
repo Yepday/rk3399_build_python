@@ -80,6 +80,12 @@ class BinaryEntry:
             return None
 
         sec = config[section]
+
+        # Check if section is enabled (SEC=1)
+        sec_enabled = sec.get("SEC", "0")
+        if sec_enabled == "0":
+            return None
+
         path_str = sec.get("PATH", sec.get("Path1", ""))
         if not path_str:
             return None

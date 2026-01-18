@@ -186,17 +186,31 @@ PATH=trust.img
 
 ## 参考资源
 
+### 完整原构建项目（优先参考）
+**位置**：`/home/lyc/Desktop/OrangePiRK3399_Merged`
+
+这是一个完整的 OrangePi RK3399 构建项目，包含所有必需的组件和配置文件：
+- 完整的 RKBOOT/*.ini 配置文件
+- 完整的 RKTRUST/*.ini 配置文件
+- 所有二进制组件（DDR init、miniloader、BL31、BL32 等）
+- 完整的构建脚本和工具链
+
+**使用规则**：
+- 当构建项目时缺少组件或配置，可以从此项目中查找和复制
+- 可以用来验证 Python 实现的输出是否正确
+- 参考其目录结构和文件组织方式
+
 ### 原始 C 代码（参考实现）
-位于 `D:\docs\proxy\build_rk3399\uboot\tools\rockchip\`:
+位于 `/home/lyc/Desktop/build_rk3399/uboot/tools/rockchip/`:
 - `loaderimage.c` - loader 镜像打包
 - `boot_merger.c` - boot 合并器
 - `trust_merger.c` - trust 合并器
 
 ### 参考文档
-- `D:\docs\proxy\build_rk3399\uboot\固件打包原理深度解析.md`
-- `D:\docs\proxy\build_rk3399\uboot\docs\loader镜像打包教程.md`
-- `D:\docs\proxy\build_rk3399\uboot\docs\trust镜像打包教程.md`
-- `D:\docs\proxy\build_rk3399\uboot\docs\uboot镜像打包教程.md`
+- `/home/lyc/Desktop/build_rk3399/uboot/固件打包原理深度解析.md`
+- `/home/lyc/Desktop/build_rk3399/uboot/docs/loader镜像打包教程.md`
+- `/home/lyc/Desktop/build_rk3399/uboot/docs/trust镜像打包教程.md`
+- `/home/lyc/Desktop/build_rk3399/uboot/docs/uboot镜像打包教程.md`
 
 ### 关键数据结构（来自 C 源码）
 

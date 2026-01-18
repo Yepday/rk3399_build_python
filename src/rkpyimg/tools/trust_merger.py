@@ -54,20 +54,23 @@ class RSAMode(IntEnum):
 
     NONE = 0
     PKCS1_V15 = 1
+    PKCS1_V15_RSA2048 = 2  # Default for RK3399 and most chips
     PKCS1_V21 = 3  # Used by RK3308/PX30
-    PKCS1_V21_NEW = 4  # Default for most chips
+    PKCS1_V21_NEW = 4  # Alternative mode
 
 
 class SHAMode(IntEnum):
     """SHA hash modes for trust image."""
 
+    NONE = 0
     SHA1 = 1
-    SHA256 = 2
-    SHA512 = 3
+    SHA256_RK = 2  # RK3368 only (big-endian)
+    SHA256 = 3  # Little-endian (default)
 
 
 # Constants from trust_merger.h
-TRUST_HEADER_SIZE = 2048
+TRUST_HEADER_SIZE = 2048  # Padded size for alignment
+TRUST_HEADER_STRUCT_SIZE = 800  # Actual struct size (tag+version+flags+size+reserved+RSA arrays)
 SIGNATURE_SIZE = 256
 ENTRY_ALIGN = 2048
 ELF_MAGIC = 0x464C457F  # b'\x7fELF'
@@ -282,8 +285,8 @@ class TrustMerger:
     """
 
     config: RKTrustConfig
-    rsa_mode: RSAMode = RSAMode.PKCS1_V21_NEW
-    sha_mode: SHAMode = SHAMode.SHA256
+    rsa_mode: RSAMode = RSAMode.PKCS1_V15_RSA2048  # Default: RSA-2048 (mode=2)
+    sha_mode: SHAMode = SHAMode.SHA256  # Default: SHA256 little-endian (mode=3)
     size: int = 1024  # KB
 
     @classmethod
@@ -324,13 +327,16 @@ class TrustMerger:
             try:
                 # Try to parse as ELF
                 segments = parse_elf_segments(self.config.bl31.path)
-                for segment in segments:
-                    comp = BLComponent.from_elf(
-                        self.config.bl31,
-                        b'BL31',
-                        segment,
-                    )
-                    components.append(comp)
+                # Add all PT_LOAD segments as separate BL31 components
+                # This matches the original C implementation behavior
+                if segments:
+                    for segment in segments:
+                        comp = BLComponent.from_elf(
+                            self.config.bl31,
+                            b'BL31',
+                            segment,
+                        )
+                        components.append(comp)
             except ValueError:
                 # Not an ELF file, treat as binary
                 comp = BLComponent.from_binary_entry(
@@ -343,13 +349,15 @@ class TrustMerger:
         if self.config.bl32 and self.config.bl32.path.exists():
             try:
                 segments = parse_elf_segments(self.config.bl32.path)
-                for segment in segments:
-                    comp = BLComponent.from_elf(
-                        self.config.bl32,
-                        b'BL32',
-                        segment,
-                    )
-                    components.append(comp)
+                # Add all PT_LOAD segments as separate BL32 components
+                if segments:
+                    for segment in segments:
+                        comp = BLComponent.from_elf(
+                            self.config.bl32,
+                            b'BL32',
+                            segment,
+                        )
+                        components.append(comp)
             except ValueError:
                 comp = BLComponent.from_binary_entry(
                     self.config.bl32,
@@ -393,11 +401,12 @@ class TrustMerger:
         num_components = len(components)
 
         # Calculate offsets
-        # Header: 2048 bytes
-        # Component data: 48 bytes per component (after header)
+        # TRUST_HEADER struct: 800 bytes (but padded to 2048 for binary data)
+        # Component data: 48 bytes per component (after header struct at offset 800)
         # Signature: 256 bytes (after component data)
         # Trust components: 16 bytes per component (after signature)
-        sign_offset = 92 + num_components * 48  # sizeof(TRUST_HEADER) without RSA arrays
+        # Binary data: starts at 2048 (TRUST_HEADER_SIZE)
+        sign_offset = TRUST_HEADER_STRUCT_SIZE + num_components * 48
         component_info_offset = sign_offset + SIGNATURE_SIZE
 
         # Build header (2048 bytes)
@@ -427,7 +436,8 @@ class TrustMerger:
 
         # Allocate output buffer
         # Calculate total size
-        out_file_size = TRUST_HEADER_SIZE
+        # Header + ComponentData + Signature + TrustComponent + Binary data
+        out_file_size = component_info_offset + num_components * 16
         for comp in components:
             out_file_size += comp.align_size
 
@@ -437,8 +447,9 @@ class TrustMerger:
         out_buf[0:TRUST_HEADER_SIZE] = header_buf
 
         # Write component data and binary data
+        # Binary data starts at TRUST_HEADER_SIZE (2048), matching C implementation
         data_offset = TRUST_HEADER_SIZE
-        comp_data_offset = 92  # After tag, version, flags, size, reserved
+        comp_data_offset = TRUST_HEADER_STRUCT_SIZE  # COMPONENT_DATA starts at offset 800
 
         for idx, comp in enumerate(components):
             # Read component binary data
@@ -472,9 +483,27 @@ class TrustMerger:
             out_buf[data_offset:data_offset + len(comp_data)] = comp_data
             data_offset += comp.align_size
 
+        # Write to file with backup copies
+        # Original C code: g_trust_max_num = 2, g_trust_max_size = 2MB
+        # Creates 4MB file with 2 copies of the trust image
+        TRUST_MAX_SIZE = 2 * 1024 * 1024  # 2MB per copy
+        TRUST_MAX_NUM = 2  # Number of copies
+
+        # Check if image fits in max size
+        if len(out_buf) > TRUST_MAX_SIZE:
+            raise ValueError(f"Trust image size ({len(out_buf)}) exceeds max size ({TRUST_MAX_SIZE})")
+
+        # Create buffer for all copies
+        total_buf = bytearray(TRUST_MAX_SIZE * TRUST_MAX_NUM)
+
+        # Copy trust image to each backup location
+        for i in range(TRUST_MAX_NUM):
+            offset = i * TRUST_MAX_SIZE
+            total_buf[offset:offset + len(out_buf)] = out_buf
+
         # Write to file
         with open(output_path, "wb") as f:
-            f.write(out_buf)
+            f.write(total_buf)
 
         return output_path
 
@@ -548,8 +577,8 @@ class TrustMerger:
 
             # Parse components
             for i in range(num_components):
-                # Read component data (load address)
-                comp_data_offset = 92 + i * 48  # After main header fields
+                # Read component data (load address and hash)
+                comp_data_offset = TRUST_HEADER_STRUCT_SIZE + i * 48  # After header struct at 800
                 load_addr = struct.unpack_from("<I", header_data, comp_data_offset + 32)[0]
 
                 # Read component info
@@ -617,16 +646,16 @@ def main() -> None:
     parser.add_argument(
         "--rsa",
         type=int,
-        default=4,
+        default=2,
         choices=[0, 1, 2, 3, 4],
-        help="RSA mode: 0=none, 1=1024, 2=2048, 3=2048 PSS, 4=2048 new (default: 4)",
+        help="RSA mode: 0=none, 1=1024, 2=2048 (default), 3=2048 PSS, 4=2048 new",
     )
     parser.add_argument(
         "--sha",
         type=int,
-        default=2,
+        default=3,
         choices=[0, 1, 2, 3],
-        help="SHA mode: 0=none, 1=SHA1, 2=SHA256 (default), 3=SHA512",
+        help="SHA mode: 0=none, 1=SHA1, 2=SHA256 RK, 3=SHA256 (default)",
     )
     parser.add_argument(
         "--size",
