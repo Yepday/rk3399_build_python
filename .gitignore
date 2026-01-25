@@ -15,6 +15,13 @@ components/toolchain/
 *.img
 *.iso
 
+# Compiled artifacts (keep rk33 firmware as they are required components)
+components/firmware/u-boot.bin
+components/firmware/uboot.img
+components/firmware/trust.img
+components/firmware/loader.bin
+components/firmware/idbloader.img
+
 # IDE
 .vscode/
 .idea/

@@ -267,8 +267,10 @@ class BuildPipeline:
                     return rc
             else:
                 print_phase(3, 3, "Skipping Flash")
-                print("To flash, run:")
-                print(f"  sudo ./scripts/flash_bootloader.sh /dev/sdX {self.build_dir}")
+                print("Images are ready. To flash to SD card, run:")
+                print(f"  {Colors.YELLOW}sudo ./scripts/flash_bootloader.sh{Colors.NC}")
+                print()
+                print("The script will auto-detect the build directory and guide you to select the target device.")
 
             # Success!
             print_header("Build Pipeline Complete!")
