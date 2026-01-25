@@ -158,9 +158,20 @@ class RKBootConfig:
             minor = int(config["VERSION"].get("MINOR", "0"))
             version = (major, minor)
 
-        # Parse DDR binaries (CODE471_OPTION)
+        # Parse DDR binaries (CODE471_OPTION or LOADER_OPTION FlashData)
         ddr_bins: list[BinaryEntry] = []
-        if "CODE471_OPTION" in config:
+
+        # First try LOADER_OPTION (preferred for idbloader.img)
+        if "LOADER_OPTION" in config:
+            flash_data_path = config["LOADER_OPTION"].get("FlashData", "")
+            if flash_data_path:
+                bin_path = Path(flash_data_path)
+                if not bin_path.is_absolute():
+                    bin_path = base_path / bin_path
+                ddr_bins.append(BinaryEntry(path=bin_path))
+
+        # Fallback to CODE471_OPTION if LOADER_OPTION not found
+        if not ddr_bins and "CODE471_OPTION" in config:
             num = int(config["CODE471_OPTION"].get("NUM", "0"))
             for i in range(1, num + 1):
                 path_key = f"Path{i}"
@@ -170,9 +181,20 @@ class RKBootConfig:
                         bin_path = base_path / bin_path
                     ddr_bins.append(BinaryEntry(path=bin_path))
 
-        # Parse loader binaries (CODE472_OPTION)
+        # Parse loader binaries (LOADER_OPTION FlashBoot for SD boot, or CODE472_OPTION for USB)
         loader_bins: list[BinaryEntry] = []
-        if "CODE472_OPTION" in config:
+
+        # First try LOADER_OPTION FlashBoot (preferred for idbloader.img)
+        if "LOADER_OPTION" in config:
+            flash_boot_path = config["LOADER_OPTION"].get("FlashBoot", "")
+            if flash_boot_path:
+                bin_path = Path(flash_boot_path)
+                if not bin_path.is_absolute():
+                    bin_path = base_path / bin_path
+                loader_bins.append(BinaryEntry(path=bin_path))
+
+        # Fallback to CODE472_OPTION if LOADER_OPTION not found (for USB boot)
+        if not loader_bins and "CODE472_OPTION" in config:
             num = int(config["CODE472_OPTION"].get("NUM", "0"))
             for i in range(1, num + 1):
                 path_key = f"Path{i}"

@@ -535,6 +535,15 @@ class BootMerger:
         with open(output_path, "ab") as f:
             f.write(struct.pack("<I", crc))
 
+        # RC4 encrypt entire image if enabled (full image encryption like rksd format)
+        if self.enable_rc4:
+            with open(output_path, "rb") as f:
+                full_image = f.read()
+            encrypted_image = rc4_encrypt(full_image)
+            with open(output_path, "wb") as f:
+                f.write(encrypted_image)
+            print(f"Applied RC4 encryption to entire image")
+
         print(f"Pack success: {output_path}")
         print(f"Image size: {output_path.stat().st_size} bytes")
         print(f"CRC32: 0x{crc:08X}")
@@ -666,17 +675,9 @@ class BootMerger:
 
         padded_data = data.ljust(aligned_size, b'\x00')
 
-        # RC4 encryption if enabled
-        if self.enable_rc4:
-            if fix:
-                # Block encryption (512-byte blocks for loader data)
-                encrypted_data = rc4_encrypt_blocks(padded_data, SMALL_PACKET)
-            else:
-                # Whole encryption (for CODE471/CODE472 data)
-                encrypted_data = rc4_encrypt(padded_data)
-            f.write(encrypted_data)
-        else:
-            f.write(padded_data)
+        # Note: RC4 encryption is now applied to the entire image at the end
+        # (in pack() method) rather than per-entry, to match rksd format
+        f.write(padded_data)
 
     def unpack(self, input_path: str | Path, output_dir: str | Path) -> None:
         """
