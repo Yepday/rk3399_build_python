@@ -43,7 +43,10 @@
       "Bash(sudo blockdev:*)",
       "Bash(bash:*)",
       "Bash(du:*)",
-      "Bash(readlink:*)"
+      "Bash(readlink:*)",
+      "Bash(/home/lyc/Desktop/OrangePiRK3399_Merged/toolchain/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-gcc:*)",
+      "Bash(git ls-remote:*)",
+      "Bash(echo:*)"
     ]
   }
 }

@@ -9,7 +9,7 @@
 #
 # 示例:
 #   sudo ./flash_bootloader.sh /dev/mmcblk0
-#   sudo ./flash_bootloader.sh /dev/sdb test_data/output
+#   sudo ./flash_bootloader.sh /dev/sdb build/boot
 #
 
 set -e
@@ -151,7 +151,9 @@ else
     else
         echo -e "${RED}错误: 未找到构建目录${NC}"
         echo "请先构建镜像："
-        echo "  python3 scripts/build_bootloader.py"
+        echo "  python3 scripts/build_all.py           # 一键构建（推荐）"
+        echo "或："
+        echo "  python3 scripts/build_bootloader.py    # 仅构建 bootloader"
         echo ""
         echo "或指定构建目录："
         echo "  sudo $0 $DEVICE <构建目录>"
@@ -240,7 +242,9 @@ if [ "$ALL_EXIST" = false ]; then
     echo -e "${RED}错误: 必需的镜像文件不存在${NC}"
     echo ""
     echo "请先构建镜像："
-    echo "  python3 scripts/build_bootloader.py"
+    echo "  python3 scripts/build_all.py           # 一键构建（推荐）"
+    echo "或："
+    echo "  python3 scripts/build_bootloader.py    # 仅构建 bootloader"
     exit 1
 fi
 

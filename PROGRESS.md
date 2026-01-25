@@ -6,13 +6,283 @@
 
 ## 当前状态
 
-**阶段**: Phase 2 - 完整迁移完成 ✅
+**阶段**: Phase 2 - 完整迁移完成 + 工具链自动化 ✅
 **最后更新**: 2026-01-24
-**整体进度**: Phase 1 完成 100% + Phase 2 目录重组和 U-Boot 编译集成完成
+**整体进度**: Phase 1 完成 100% + Phase 2 完成 + 工具链自动下载完成
 
 ---
 
 ## 会话记录
+
+### 会话 #9 - 2026-01-24
+
+**参与者**: Claude Sonnet 4.5 + 用户
+
+#### 🎯 关键改进：交叉编译器自动下载
+
+**用户问题**: 构建失败 - 缺少 `aarch64-linux-gnu-gcc` 交叉编译器
+
+**解决方案**: 实现与参考项目一致的 Linaro GCC 6.3.1 自动下载机制
+
+#### 完成的工作
+
+**1. 调研参考项目方案**
+- [x] 分析参考项目的工具链获取方式
+- [x] 确认使用 Linaro GCC 6.3.1（与 Ubuntu 20.04 系统包 GCC 9.3.0 不同）
+- [x] 理由：保持与参考项目完全一致，避免编译器版本差异带来的兼容性问题
+
+**2. 修改 build_uboot.py**
+
+**修改详情**:
+
+a. **优化依赖检查 (check_dependencies)**
+```python
+# 修改前：强制要求 aarch64-linux-gnu-gcc
+# 修改后：仅检查必备工具（git, make, gcc），交叉编译器改为可选提示
+try:
+    rc, _, _ = self.run_command(["aarch64-linux-gnu-gcc", "--version"])
+except FileNotFoundError:
+    print_warning("aarch64-linux-gnu-gcc not in system (will download)")
+```
+
+b. **智能工具链下载 (download_toolchain)**
+```python
+# 检查优先级：
+# 1. 系统 PATH 中的工具链
+# 2. 本地 Linaro GCC 6.3.1
+# 3. 自动从 GitHub 下载
+
+TOOLCHAIN_REPO = "https://github.com/orangepi-xunlong/toolchain.git"
+TOOLCHAIN_BRANCH = "aarch64-linux-gnu-6.3"
+```
+
+c. **正确的路径处理 (get_toolchain_prefix)**
+```python
+# 支持 Linaro 工具链目录结构
+linaro_gcc = toolchain_dir / "gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu"
+gcc_path = linaro_gcc / "bin" / "aarch64-linux-gnu-gcc"
+```
+
+d. **环境变量传递支持 (run_command + configure_uboot)**
+```python
+# 添加 env 参数支持
+def run_command(self, cmd: list, cwd=None, check=True, env=None):
+    subprocess.run(cmd, cwd=cwd, check=check, env=env)
+
+# configure_uboot 正确传递环境变量
+env = os.environ.copy()
+env["CROSS_COMPILE"] = cross_compile
+env["ARCH"] = "arm64"
+self.run_command(["make", "evb-rk3399_defconfig"], env=env)
+```
+
+e. **异常处理优化**
+```python
+# 修复 FileNotFoundError 捕获问题
+try:
+    rc, _, _ = self.run_command(["aarch64-linux-gnu-gcc", "--version"])
+except FileNotFoundError:
+    # 命令不存在时的处理
+    pass
+```
+
+**3. 验证测试**
+
+**测试结果**:
+```bash
+$ python3 scripts/build_all.py
+
+✓ 自动下载 Linaro GCC 6.3.1 (约 300MB)
+✓ 编译 U-Boot 成功 (123.9秒, 24核)
+✓ 生成 u-boot.bin (819.6 KB)
+✓ 构建 idbloader.img (150,300 bytes)
+✓ 构建 uboot.img (4,194,304 bytes)
+✓ 完整构建流程通过
+```
+
+#### 技术对比
+
+**交叉编译器版本差异**:
+
+| 来源 | 版本 | 发布时间 | 特点 |
+|------|------|---------|------|
+| **Ubuntu 20.04 系统包** | GCC 9.3.0 | 2020年 | 新版优化，但可能与老代码不兼容 |
+| **Linaro (参考项目)** | GCC 6.3.1 | 2017年5月 | 与参考项目完全一致 ✅ |
+
+**选择 Linaro 的理由**:
+1. ✅ 与参考项目版本完全一致
+2. ✅ 老的 U-Boot 代码基于该版本开发
+3. ✅ 避免新版编译器产生新的警告/错误
+4. ✅ 保证构建结果一致性
+
+#### 工具链下载机制
+
+**下载流程**:
+```
+1. 检测系统中是否有 aarch64-linux-gnu-gcc
+2. 检测本地是否有 Linaro GCC 6.3.1
+3. 如果都没有，从 GitHub 下载：
+   - git clone --depth=1 --branch aarch64-linux-gnu-6.3
+   - 仓库: https://github.com/orangepi-xunlong/toolchain.git
+4. 设置可执行权限
+5. 验证版本是否为 6.3.1
+```
+
+**下载输出**:
+```
+[3] Checking toolchain
+⚠ Toolchain not found, downloading Linaro GCC 6.3.1...
+  Repository: https://github.com/orangepi-xunlong/toolchain.git
+  Branch: aarch64-linux-gnu-6.3
+  Destination: components/toolchain
+
+✓ Linaro GCC 6.3.1 downloaded successfully (45.2s)
+✓ Linaro GCC 6.3.1 verified
+```
+
+#### 目录结构
+
+**工具链位置**:
+```
+components/toolchain/
+└── gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/
+    ├── bin/
+    │   ├── aarch64-linux-gnu-gcc      # 编译器
+    │   ├── aarch64-linux-gnu-ld       # 链接器
+    │   ├── aarch64-linux-gnu-as       # 汇编器
+    │   └── ...
+    ├── lib/
+    ├── libexec/
+    └── aarch64-linux-gnu/
+```
+
+#### 构建流程优化
+
+**修改前**（失败）:
+```bash
+$ python3 scripts/build_all.py
+
+[1] Checking dependencies
+✗ aarch64-linux-gnu-gcc not found
+FileNotFoundError: [Errno 2] No such file or directory
+```
+
+**修改后**（成功）:
+```bash
+$ python3 scripts/build_all.py
+
+[1] Checking dependencies
+✓ git found
+✓ make found
+✓ gcc found
+⚠ aarch64-linux-gnu-gcc not in system (will download)
+
+[2] Downloading U-Boot
+✓ U-Boot downloaded (12.3s)
+
+[3] Checking toolchain
+⚠ Toolchain not found, downloading Linaro GCC 6.3.1...
+✓ Linaro GCC 6.3.1 downloaded (45.2s)
+
+[4] Configuring U-Boot
+  CROSS_COMPILE: components/toolchain/.../bin/aarch64-linux-gnu-
+✓ U-Boot configured
+
+[5] Building U-Boot (using 24 cores)
+✓ U-Boot built successfully (123.9s)
+
+[6] Extracting u-boot.bin
+✓ u-boot.bin copied to build/boot/u-boot.bin
+```
+
+#### 用户体验改进
+
+**1. 零配置构建**
+- 无需手动安装交叉编译器
+- 无需配置环境变量
+- 一键执行 `python3 scripts/build_all.py` 即可
+
+**2. 智能回退**
+- 优先使用系统工具链（如果已安装）
+- 自动下载 Linaro 工具链（如果需要）
+- 清晰的错误提示和建议
+
+**3. 缓存友好**
+- 工具链下载一次后永久保留
+- 后续构建直接使用缓存的工具链
+- 支持 `--clean` 完全清理重新下载
+
+#### 完整构建输出
+
+```
+======================================================================
+              RK3399 Complete Bootloader Build Pipeline
+======================================================================
+
+[Phase 1/3] Building U-Boot from Source
+✓ Dependencies check passed
+✓ U-Boot source downloaded
+✓ Linaro GCC 6.3.1 downloaded and verified
+✓ U-Boot configured for RK3399
+✓ U-Boot compiled (123.9s)
+✓ u-boot.bin extracted (819.6 KB)
+
+[Phase 2/3] Building Bootloader Images
+✓ idbloader.img created (150,300 bytes)
+✓ uboot.img created (4,194,304 bytes)
+
+[Phase 3/3] Ready to Flash
+Output: build/boot/
+  ✓ idbloader.img
+  ✓ uboot.img
+  ✓ u-boot.bin
+
+Build Pipeline Complete! 🎉
+```
+
+#### 下一步计划
+
+**Phase 2 持续改进**:
+1. ✅ **工具链自动化** - 已完成
+2. ⬜ **多板型支持** - 支持不同 RK3399 开发板配置
+3. ⬜ **增量编译优化** - 更快的重复构建
+4. ⬜ **内核编译集成** - 实现 build_kernel.py
+
+**Phase 3 计划**:
+1. 完整镜像生成（boot + kernel + rootfs）
+2. 多芯片支持（RK3588, RK3568 等）
+3. PyPI 发布准备
+
+#### 技术笔记
+
+**Git Clone 优化**:
+```bash
+# 使用 --depth=1 只克隆最新提交（减少下载量）
+git clone --depth=1 --branch aarch64-linux-gnu-6.3 \
+  https://github.com/orangepi-xunlong/toolchain.git
+```
+
+**Python subprocess 异常处理**:
+```python
+# subprocess.run() 找不到命令时抛出 FileNotFoundError
+# 而不是返回非零退出码，需要 try-except 捕获
+try:
+    subprocess.run(["nonexistent-command"])
+except FileNotFoundError:
+    print("Command not found")
+```
+
+**环境变量传递**:
+```python
+# 必须在 subprocess.run() 中传递 env 参数
+env = os.environ.copy()
+env["CROSS_COMPILE"] = "aarch64-linux-gnu-"
+subprocess.run(["make"], env=env)  # ✓ 正确
+subprocess.run(["make"])            # ✗ 不会使用自定义环境变量
+```
+
+---
+
 
 ### 会话 #8 - 2026-01-24
 

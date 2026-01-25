@@ -102,13 +102,14 @@ class UBootBuilder:
         print_step(step, message)
 
     def run_command(self, cmd: list, cwd: Optional[Path] = None,
-                   check: bool = True) -> Tuple[int, str, str]:
+                   check: bool = True, env: Optional[dict] = None) -> Tuple[int, str, str]:
         """Run a shell command.
 
         Args:
             cmd: Command as list of strings
             cwd: Working directory for command
             check: Raise exception on error
+            env: Environment variables (None = inherit from parent)
 
         Returns:
             Tuple of (returncode, stdout, stderr)
@@ -119,7 +120,8 @@ class UBootBuilder:
                 cwd=cwd,
                 capture_output=True,
                 text=True,
-                check=check
+                check=check,
+                env=env
             )
             return result.returncode, result.stdout, result.stderr
         except subprocess.CalledProcessError as e:
@@ -135,21 +137,38 @@ class UBootBuilder:
         """
         self.log_step(1, "Checking dependencies")
 
+        # Only check essential build tools (not cross-compiler, as we'll download it)
         dependencies = [
             ("git", "git --version"),
             ("make", "make --version"),
             ("gcc", "gcc --version"),
-            ("aarch64-linux-gnu-gcc", "aarch64-linux-gnu-gcc --version"),
         ]
 
         all_found = True
         for tool_name, check_cmd in dependencies:
-            rc, _, _ = self.run_command(check_cmd.split(), check=False)
-            if rc == 0:
-                print_success(f"{tool_name} found")
-            else:
-                print_warning(f"{tool_name} not found")
+            try:
+                rc, _, _ = self.run_command(check_cmd.split(), check=False)
+                if rc == 0:
+                    print_success(f"{tool_name} found")
+                else:
+                    print_error(f"{tool_name} not found")
+                    all_found = False
+            except FileNotFoundError:
+                print_error(f"{tool_name} not found")
                 all_found = False
+
+        # Check for cross-compiler separately (optional)
+        try:
+            rc, _, _ = self.run_command(
+                ["aarch64-linux-gnu-gcc", "--version"],
+                check=False
+            )
+            if rc == 0:
+                print_success("aarch64-linux-gnu-gcc found in system")
+            else:
+                print_warning("aarch64-linux-gnu-gcc not in system (will download)")
+        except FileNotFoundError:
+            print_warning("aarch64-linux-gnu-gcc not in system (will download)")
 
         return all_found
 
@@ -201,22 +220,36 @@ class UBootBuilder:
         self.log_step(3, "Checking toolchain")
 
         # Check if toolchain already in PATH
-        rc, _, _ = self.run_command(
-            ["aarch64-linux-gnu-gcc", "--version"],
-            check=False
-        )
+        try:
+            rc, _, _ = self.run_command(
+                ["aarch64-linux-gnu-gcc", "--version"],
+                check=False
+            )
+            if rc == 0:
+                print_success("Toolchain found in system PATH")
+                return True
+        except FileNotFoundError:
+            pass  # Not in PATH, continue checking local
 
-        if rc == 0:
-            print_success("Toolchain found in system PATH")
-            return True
+        # Check if local toolchain exists (Linaro GCC 6.3.1)
+        linaro_gcc = self.toolchain_dir / "gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu"
+        gcc_path = linaro_gcc / "bin" / "aarch64-linux-gnu-gcc"
 
-        # Check if local toolchain exists
-        gcc_path = self.toolchain_dir / "bin" / "aarch64-linux-gnu-gcc"
         if gcc_path.exists():
-            print_success(f"Local toolchain found at {self.toolchain_dir}")
+            print_success(f"Local Linaro toolchain found at {linaro_gcc}")
+            # Verify version
+            try:
+                rc, stdout, _ = self.run_command(
+                    [str(gcc_path), "--version"],
+                    check=False
+                )
+                if rc == 0 and "6.3.1" in stdout:
+                    print_success("Linaro GCC 6.3.1 verified")
+            except Exception:
+                pass
             return True
 
-        print_warning("Toolchain not found, attempting to download...")
+        print_warning("Toolchain not found, downloading Linaro GCC 6.3.1...")
         print(f"  Repository: {self.TOOLCHAIN_REPO}")
         print(f"  Branch: {self.TOOLCHAIN_BRANCH}")
         print(f"  Destination: {self.toolchain_dir}")
@@ -236,11 +269,23 @@ class UBootBuilder:
         elapsed = time.time() - start_time
 
         if rc == 0:
-            print_success(f"Toolchain downloaded successfully ({elapsed:.1f}s)")
-            return True
+            # Verify the download
+            if gcc_path.exists():
+                print_success(f"Linaro GCC 6.3.1 downloaded successfully ({elapsed:.1f}s)")
+                # Make executables
+                import stat
+                for exe in (linaro_gcc / "bin").glob("*"):
+                    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+                return True
+            else:
+                print_error("Download succeeded but toolchain structure unexpected")
+                return False
         else:
             print_error("Failed to download toolchain")
-            print(f"Will attempt to use system toolchain instead")
+            print(f"Error: {stderr}")
+            print()
+            print_warning("You can manually install the system toolchain:")
+            print("  sudo apt-get install gcc-aarch64-linux-gnu")
             return False
 
     def get_toolchain_prefix(self) -> str:
@@ -249,10 +294,12 @@ class UBootBuilder:
         Returns:
             Toolchain prefix string
         """
-        # Check local toolchain first
-        gcc_path = self.toolchain_dir / "bin" / f"{self.CROSS_COMPILE_ARM64}gcc"
+        # Check local toolchain first (Linaro GCC 6.3.1 structure)
+        linaro_gcc = self.toolchain_dir / "gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu"
+        gcc_path = linaro_gcc / "bin" / f"{self.CROSS_COMPILE_ARM64}gcc"
+
         if gcc_path.exists():
-            toolchain_bin = self.toolchain_dir / "bin"
+            toolchain_bin = linaro_gcc / "bin"
             return str(toolchain_bin / self.CROSS_COMPILE_ARM64)
 
         # Fall back to system toolchain
@@ -273,11 +320,15 @@ class UBootBuilder:
         env["CROSS_COMPILE"] = cross_compile
         env["ARCH"] = "arm64"
 
+        print(f"  CROSS_COMPILE: {cross_compile}")
+        print()
+
         # Run make defconfig
         rc, stdout, stderr = self.run_command(
             ["make", "evb-rk3399_defconfig"],
             cwd=self.uboot_dir,
-            check=False
+            check=False,
+            env=env
         )
 
         if rc == 0:
