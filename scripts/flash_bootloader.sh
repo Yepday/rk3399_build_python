@@ -200,8 +200,11 @@ else
     fi
 fi
 
-# boot.img (kernel) 可能在 kernel 子目录或直接在构建目录下
-if [ -f "$BUILD/kernel/boot.img" ]; then
+# boot.img (kernel) 可能在多个位置
+# 优先级：build/kernel/boot.img > build/boot/kernel/boot.img > build/boot/boot.img
+if [ -f "$PROJECT_ROOT/build/kernel/boot.img" ]; then
+    BOOT="$PROJECT_ROOT/build/kernel/boot.img"
+elif [ -f "$BUILD/kernel/boot.img" ]; then
     BOOT="$BUILD/kernel/boot.img"
 elif [ -f "$BUILD/boot.img" ]; then
     BOOT="$BUILD/boot.img"
