@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-Complete RK3399 Bootloader Build Pipeline
+Complete RK3399 System Build Pipeline
 
 This script coordinates the complete build pipeline:
 1. Download and compile U-Boot (if needed)
 2. Build idbloader.img and uboot.img
-3. Optionally flash to SD card
+3. Download and compile Linux kernel (if needed)
+4. Optionally flash to SD card
 
 Usage:
-    python3 build_all.py                     # Full build
-    python3 build_all.py --skip-uboot-build  # Skip U-Boot compilation
-    python3 build_all.py --flash /dev/sdX    # Build and flash
-    python3 build_all.py --clean             # Clean everything
+    python3 build_all.py                          # Full build
+    python3 build_all.py --skip-uboot-build       # Skip U-Boot compilation
+    python3 build_all.py --skip-kernel-build      # Skip kernel compilation
+    python3 build_all.py --flash /dev/sdX         # Build and flash
+    python3 build_all.py --clean                  # Clean everything
 """
 
 import argparse
@@ -128,11 +130,13 @@ class BuildPipeline:
 
         self.project_root = project_root.resolve()
         self.scripts_dir = self.project_root / "scripts"
-        self.build_dir = self.project_root / "build" / "boot"
+        self.build_boot_dir = self.project_root / "build" / "boot"
+        self.build_kernel_dir = self.project_root / "build" / "kernel"
 
         # Script paths
         self.build_uboot_script = self.scripts_dir / "build_uboot.py"
         self.build_bootloader_script = self.scripts_dir / "build_bootloader.py"
+        self.build_kernel_script = self.scripts_dir / "build_kernel.py"
         self.flash_script = self.scripts_dir / "flash_bootloader.sh"
 
     def check_scripts_exist(self) -> bool:
@@ -144,6 +148,7 @@ class BuildPipeline:
         scripts = [
             ("build_uboot.py", self.build_uboot_script),
             ("build_bootloader.py", self.build_bootloader_script),
+            ("build_kernel.py", self.build_kernel_script),
             ("flash_bootloader.sh", self.flash_script),
         ]
 
@@ -173,7 +178,11 @@ class BuildPipeline:
         print("\n2. Cleaning bootloader images...")
         rc2 = run_script(self.build_bootloader_script, ["--clean"], check=False)
 
-        if rc1 == 0 and rc2 == 0:
+        # Clean kernel
+        print("\n3. Cleaning kernel...")
+        rc3 = run_script(self.build_kernel_script, ["--clean"], check=False)
+
+        if rc1 == 0 and rc2 == 0 and rc3 == 0:
             print_success("All clean completed")
             return 0
         else:
@@ -189,7 +198,7 @@ class BuildPipeline:
         Returns:
             Return code
         """
-        print_phase(1, 3, "Building U-Boot from Source")
+        print_phase(1, 4, "Building U-Boot from Source")
 
         args = []
         if skip_download:
@@ -203,9 +212,26 @@ class BuildPipeline:
         Returns:
             Return code
         """
-        print_phase(2, 3, "Building Bootloader Images")
+        print_phase(2, 4, "Building Bootloader Images")
 
         return run_script(self.build_bootloader_script)
+
+    def build_kernel(self, skip_download: bool = False) -> int:
+        """Build Linux kernel from source.
+
+        Args:
+            skip_download: Skip downloading sources
+
+        Returns:
+            Return code
+        """
+        print_phase(3, 4, "Building Linux Kernel")
+
+        args = []
+        if skip_download:
+            args.append("--skip-download")
+
+        return run_script(self.build_kernel_script, args)
 
     def flash_to_device(self, device: str) -> int:
         """Flash bootloader to device.
@@ -216,23 +242,24 @@ class BuildPipeline:
         Returns:
             Return code
         """
-        print_phase(3, 3, f"Flashing to {device}")
+        print_phase(4, 4, f"Flashing to {device}")
 
         return run_shell_script(self.flash_script, [device])
 
-    def build_all(self, skip_uboot_build: bool = False, skip_download: bool = False,
-                  flash_device: Optional[str] = None) -> int:
+    def build_all(self, skip_uboot_build: bool = False, skip_kernel_build: bool = False,
+                  skip_download: bool = False, flash_device: Optional[str] = None) -> int:
         """Execute complete build pipeline.
 
         Args:
             skip_uboot_build: Skip U-Boot compilation (use existing)
+            skip_kernel_build: Skip kernel compilation (use existing)
             skip_download: Skip downloading sources
             flash_device: Device to flash to (None = don't flash)
 
         Returns:
             Return code
         """
-        print_header("RK3399 Complete Bootloader Build Pipeline")
+        print_header("RK3399 Complete System Build Pipeline")
 
         # Check scripts
         print("Checking build scripts...")
@@ -250,7 +277,7 @@ class BuildPipeline:
                     print_error("U-Boot build failed")
                     return rc
             else:
-                print_phase(1, 3, "Skipping U-Boot Build")
+                print_phase(1, 4, "Skipping U-Boot Build")
                 print("Using existing u-boot.bin")
 
             # Phase 2: Build bootloader images
@@ -259,14 +286,24 @@ class BuildPipeline:
                 print_error("Bootloader image build failed")
                 return rc
 
-            # Phase 3: Flash (optional)
+            # Phase 3: Build kernel (optional)
+            if not skip_kernel_build:
+                rc = self.build_kernel(skip_download=skip_download)
+                if rc != 0:
+                    print_error("Kernel build failed")
+                    return rc
+            else:
+                print_phase(3, 4, "Skipping Kernel Build")
+                print("Using existing kernel image")
+
+            # Phase 4: Flash (optional)
             if flash_device:
                 rc = self.flash_to_device(flash_device)
                 if rc != 0:
                     print_error("Flash failed")
                     return rc
             else:
-                print_phase(3, 3, "Skipping Flash")
+                print_phase(4, 4, "Skipping Flash")
                 print("Images are ready. To flash to SD card, run:")
                 print(f"  {Colors.YELLOW}sudo ./scripts/flash_bootloader.sh{Colors.NC}")
                 print()
@@ -274,17 +311,40 @@ class BuildPipeline:
 
             # Success!
             print_header("Build Pipeline Complete!")
-            print(f"Output directory: {self.build_dir}")
             print()
             print(f"{Colors.GREEN}All images built successfully!{Colors.NC}")
             print()
 
             # List generated files
-            if self.build_dir.exists():
-                print("Generated files:")
-                for img in sorted(self.build_dir.glob("*.img")) + sorted(self.build_dir.glob("*.bin")):
+            print("Generated files:")
+            print()
+            print(f"  {Colors.BLUE}Bootloader (build/boot/){Colors.NC}:")
+            if self.build_boot_dir.exists():
+                for img in sorted(self.build_boot_dir.glob("*.img")) + sorted(self.build_boot_dir.glob("*.bin")):
                     size = img.stat().st_size
-                    print(f"  {Colors.GREEN}✓{Colors.NC} {img.name:20s} {size:>10,} bytes ({size // 1024:>6} KB)")
+                    print(f"    {Colors.GREEN}✓{Colors.NC} {img.name:25s} {size:>10,} bytes ({size // 1024:>6} KB)")
+
+            print()
+            print(f"  {Colors.BLUE}Kernel (build/kernel/){Colors.NC}:")
+            if self.build_kernel_dir.exists():
+                # Kernel image
+                kernel_image = self.build_kernel_dir / "Image"
+                if kernel_image.exists():
+                    size = kernel_image.stat().st_size
+                    print(f"    {Colors.GREEN}✓{Colors.NC} {'Image':25s} {size:>10,} bytes ({size // (1024*1024):>6} MB)")
+
+                # DTBs
+                dtb_dir = self.build_kernel_dir / "dtbs"
+                if dtb_dir.exists():
+                    dtb_count = len(list(dtb_dir.glob("*.dtb")))
+                    if dtb_count > 0:
+                        print(f"    {Colors.GREEN}✓{Colors.NC} {'dtbs/ ({} files)'.format(dtb_count):25s}")
+
+                # System.map
+                system_map = self.build_kernel_dir / "System.map"
+                if system_map.exists():
+                    size = system_map.stat().st_size
+                    print(f"    {Colors.GREEN}✓{Colors.NC} {'System.map':25s} {size:>10,} bytes ({size // 1024:>6} KB)")
 
             print()
 
@@ -303,7 +363,7 @@ class BuildPipeline:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Complete RK3399 bootloader build pipeline",
+        description="Complete RK3399 system build pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -316,14 +376,17 @@ Examples:
   # Skip U-Boot compilation (use existing u-boot.bin)
   python3 build_all.py --skip-uboot-build
 
+  # Skip kernel compilation (use existing kernel)
+  python3 build_all.py --skip-kernel-build
+
   # Build and flash to SD card
   python3 build_all.py --flash /dev/sdb
 
   # Clean all build artifacts
   python3 build_all.py --clean
 
-  # Quick rebuild (skip download and U-Boot build)
-  python3 build_all.py --skip-download --skip-uboot-build
+  # Quick rebuild (skip downloads and recompilation)
+  python3 build_all.py --skip-download --skip-uboot-build --skip-kernel-build
 """
     )
 
@@ -331,6 +394,11 @@ Examples:
         "--skip-uboot-build",
         action="store_true",
         help="Skip U-Boot compilation (use existing u-boot.bin)"
+    )
+    parser.add_argument(
+        "--skip-kernel-build",
+        action="store_true",
+        help="Skip kernel compilation (use existing kernel)"
     )
     parser.add_argument(
         "--skip-download",
@@ -365,6 +433,7 @@ Examples:
     # Execute build pipeline
     return pipeline.build_all(
         skip_uboot_build=args.skip_uboot_build,
+        skip_kernel_build=args.skip_kernel_build,
         skip_download=args.skip_download,
         flash_device=args.flash
     )
