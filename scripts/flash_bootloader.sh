@@ -26,6 +26,7 @@ NC='\033[0m' # No Color
 LOADER1_START=64      # idbloader.img 位置 (32KB 偏移)
 UBOOT_START=24576     # uboot.img 位置 (12MB 偏移) - OrangePi 配置
 TRUST_START=32768     # trust.img 位置 (16MB 偏移) - OrangePi 配置
+BOOT_START=49152      # boot.img 位置 (24MB 偏移) - kernel 镜像
 
 # 函数：列出可能的 SD 卡设备
 list_devices() {
@@ -199,6 +200,15 @@ else
     fi
 fi
 
+# boot.img (kernel) 可能在 kernel 子目录或直接在构建目录下
+if [ -f "$BUILD/kernel/boot.img" ]; then
+    BOOT="$BUILD/kernel/boot.img"
+elif [ -f "$BUILD/boot.img" ]; then
+    BOOT="$BUILD/boot.img"
+else
+    BOOT=""  # boot.img 不存在（可选）
+fi
+
 echo ""
 echo -e "${CYAN}========================================${NC}"
 echo -e "${CYAN}   RK3399 Bootloader 烧写工具${NC}"
@@ -235,6 +245,14 @@ if [ -n "$TRUST" ] && [ -f "$TRUST" ]; then
     echo -e "  ${GREEN}✓${NC} trust.img: ${SIZE_KB} KB (可选)"
 else
     echo -e "  ${YELLOW}⚠${NC} trust.img: 不存在 (可选，不影响基本启动)"
+fi
+
+if [ -n "$BOOT" ] && [ -f "$BOOT" ]; then
+    SIZE=$(stat -c%s "$BOOT")
+    SIZE_KB=$((SIZE / 1024))
+    echo -e "  ${GREEN}✓${NC} boot.img: ${SIZE_KB} KB (可选，kernel 镜像)"
+else
+    echo -e "  ${YELLOW}⚠${NC} boot.img: 不存在 (可选，需要单独编译 kernel)"
 fi
 
 if [ "$ALL_EXIST" = false ]; then
@@ -308,6 +326,9 @@ echo -e "  ${CYAN}[2]${NC} uboot.img     → 扇区 $UBOOT_START (偏移 $((UBOO
 if [ -n "$TRUST" ] && [ -f "$TRUST" ]; then
     echo -e "  ${CYAN}[3]${NC} trust.img     → 扇区 $TRUST_START (偏移 $((TRUST_START * 512 / 1024 / 1024)) MB)"
 fi
+if [ -n "$BOOT" ] && [ -f "$BOOT" ]; then
+    echo -e "  ${CYAN}[4]${NC} boot.img      → 扇区 $BOOT_START (偏移 $((BOOT_START * 512 / 1024 / 1024)) MB)"
+fi
 echo ""
 echo -e "${RED}${BOLD}这将覆盖设备上的引导区域！${NC}"
 echo -e "${YELLOW}请确认设备路径正确无误${NC}"
@@ -362,6 +383,19 @@ if [ -n "$TRUST" ] && [ -f "$TRUST" ]; then
     fi
 fi
 
+# 4. 烧写 boot (kernel, 如果存在)
+if [ -n "$BOOT" ] && [ -f "$BOOT" ]; then
+    echo ""
+    echo -e "${CYAN}[4/4]${NC} 烧写 boot.img (kernel，可选)..."
+    echo "  源文件: $BOOT"
+    echo "  目标: $DEVICE (扇区 $BOOT_START)"
+    if dd if=$BOOT of=$DEVICE seek=$BOOT_START conv=notrunc,fsync bs=512 status=progress 2>&1; then
+        echo -e "${GREEN}  ✓ boot.img 烧写成功${NC}"
+    else
+        echo -e "${YELLOW}  ⚠ boot.img 烧写失败（需要编译 kernel）${NC}"
+    fi
+fi
+
 # 同步到磁盘
 echo ""
 echo "正在同步数据到磁盘..."
@@ -387,5 +421,11 @@ echo ""
 echo -e "${GREEN}提示:${NC}"
 echo "  - 如果无法启动，检查串口输出"
 echo "  - 确认 SD 卡插入正确（金属触点朝下）"
-echo "  - 如需完整系统，还需烧写 rootfs 分区"
+if [ -z "$BOOT" ] || [ ! -f "$BOOT" ]; then
+    echo "  - 如需完整系统，需要编译 kernel 并烧写 boot.img"
+    echo "    参考: python3 scripts/build_all.py"
+else
+    echo "  - Kernel 已烧写，SD 卡可以直接启动"
+    echo "  - 如需完整系统，还需烧写 rootfs 分区"
+fi
 echo ""
