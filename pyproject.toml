@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "rkpyimg"
 version = "0.1.0"
-description = "Rockchip firmware packing tools in pure Python"
+description = "Complete RK3399 build system with pure Python firmware packing tools"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -15,12 +15,12 @@ authors = [
 keywords = [
     "rockchip",
     "rk3399",
-    "rk3588",
     "embedded",
     "linux",
     "firmware",
     "bootloader",
     "u-boot",
+    "orangepi",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

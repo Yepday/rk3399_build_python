@@ -1,498 +1,343 @@
-# rkpyimg
+# RK3399 完整构建系统
 
-> 纯 Python 实现的 Rockchip 固件打包工具
+> 一键构建 Rockchip RK3399 完整固件（U-Boot + Kernel + Ubuntu Rootfs）
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**首个 Python 实现**的 Rockchip 官方固件打包工具（`boot_merger`、`trust_merger`、`loaderimage`）。
+用 Python 实现的 RK3399 自动化构建系统，支持从源码到完整固件的一键构建。内置纯 Python 实现的 Rockchip 固件打包工具（`boot_merger`、`trust_merger`、`loaderimage`），无需官方 C 工具。
 
-## 为什么做这个项目？
+## 目标设备
 
-Rockchip 官方工具的问题：
-- C 语言二进制文件，缺乏文档
-- 难以集成到现代 CI/CD 流程
-- 跨平台支持差
-- 难以理解和修改
+- Orange Pi RK3399
+- Orange Pi 4
+- 其他 RK3399 开发板
 
-**rkpyimg** 提供：
-- ✅ 纯 Python 3.10+ 实现
-- ✅ 完整类型注解和现代 API
-- ✅ 跨平台支持（Windows/Linux/macOS）
-- ✅ 详细的二进制格式文档
-- ✅ 易于集成到构建系统
+## 核心功能
 
-## 支持的工具
-
-| 工具 | 状态 | 说明 |
-|------|------|------|
-| `loaderimage` | ✅ 完成 | 打包/解包 U-Boot 和 Trust 二进制 |
-| `boot_merger` | ✅ 完成 | 合并 DDR 初始化代码和 miniloader |
-| `trust_merger` | ✅ 完成 | 合并 BL31 (ATF) 和 BL32 (OP-TEE) |
-
-## 支持的芯片
-
-| 芯片 | 状态 | 适用设备 |
-|------|------|----------|
-| RK3399 | ✅ 支持 | Orange Pi RK3399, Firefly, NanoPC-T4 |
-| RK3588/RK3588S | 🔜 计划中 | Orange Pi 5, Rock 5B |
-| RK3568/RK3566 | 🔜 计划中 | Quartz64, ROC-RK3568-PC |
-| RK3328 | 🔜 计划中 | Rock64, Renegade |
-
-## 安装
-
-### 从源码安装（推荐）
-
-```bash
-# 克隆仓库
-git clone https://github.com/yourusername/rkpyimg.git
-cd rkpyimg
-
-# 安装（开发模式）
-pip install -e .
-
-# 验证安装
-rkpyimg --version
-```
-
-### 从 PyPI 安装（即将上线）
-
-```bash
-pip install rkpyimg
-```
+- ✅ **一键构建** - 全自动构建 U-Boot、Kernel、Rootfs
+- ✅ **桌面环境** - 支持 XFCE 桌面或最小系统
+- ✅ **Device Tree 自动修复** - 自动修复 OrangePi DTS 编译问题
+- ✅ **智能清理** - 保留源码或完全重置
+- ✅ **纯 Python 工具链** - 无需官方 C 编译工具
+- ✅ **跨平台支持** - Linux/macOS/Windows
 
 ## 快速开始
 
-### 完整构建流程
-
-本项目提供完整的 RK3399 系统构建流程，包括：
-1. U-Boot 引导程序编译和打包
-2. Linux 内核编译
-3. Ubuntu 根文件系统构建
-4. 镜像烧录
+### 一键构建全部组件
 
 ```bash
-# 1. 完整构建（需要 sudo 权限用于 rootfs 构建）
+# 完整构建（U-Boot + Kernel + Rootfs with XFCE）
 python3 scripts/build_all.py
 
-# 2. 仅构建 bootloader（不构建 rootfs）
+# 跳过 rootfs 构建（仅 bootloader + kernel）
 python3 scripts/build_all.py --skip-rootfs
 
-# 3. 构建指定的 Ubuntu 版本
-python3 scripts/build_all.py \
-    --rootfs-distro focal \    # Ubuntu 20.04
-    --rootfs-type server \      # Server 或 Desktop
-    --rootfs-mirror cn          # 使用中国镜像
-
-# 4. 清理构建产物
-python3 scripts/build_all.py --clean
-
-# 详细文档见下方各章节
+# 构建最小系统（无桌面环境）
+python3 scripts/build_all.py --minimal
 ```
 
-### 单独构建组件
+构建完成后，`build/` 目录包含：
+- `idbloader.img` - DDR 初始化 + Miniloader
+- `uboot.img` - U-Boot bootloader
+- `trust.img` - ARM Trusted Firmware
+- `boot.img` - Kernel + Device Tree + Ramdisk
+- `rootfs.img` - Ubuntu 根文件系统
+
+### 烧录到设备
 
 ```bash
-# 仅构建 U-Boot
-python3 scripts/build_uboot.py
+# 烧录 bootloader 到 eMMC/SD 卡
+bash scripts/flash_bootloader.sh
 
-# 仅构建 Linux 内核
-python3 scripts/build_kernel.py
-
-# 仅构建根文件系统（需要 root 权限）
-sudo python3 scripts/build_rootfs.py --distro focal --type server
-
-# 仅打包 bootloader 镜像（使用已有的 u-boot.bin）
-python3 scripts/build_bootloader.py
+# 或手动烧录
+sudo dd if=build/idbloader.img of=/dev/sdX seek=64 conv=notrunc
+sudo dd if=build/uboot.img of=/dev/sdX seek=16384 conv=notrunc
+sudo dd if=build/trust.img of=/dev/sdX seek=24576 conv=notrunc
+sudo dd if=build/boot.img of=/dev/sdX seek=32768 conv=notrunc
 ```
+
+## 分步构建指南
+
+### 1. 构建 U-Boot
+
+```bash
+python3 scripts/build_uboot.py
+```
+
+自动执行：
+1. 下载 U-Boot 源码（如果不存在）
+2. 下载 gcc-linaro 工具链
+3. 编译 U-Boot（rk3399_defconfig）
+4. 打包生成 `idbloader.img`、`uboot.img`、`trust.img`
+
+生成文件位于 `build/` 目录。
+
+### 2. 构建 Linux Kernel
+
+```bash
+python3 scripts/build_kernel.py
+```
+
+自动执行：
+1. 下载 Linux 内核源码（如果不存在）
+2. 下载 gcc-linaro 工具链
+3. **自动修复 OrangePi Device Tree 编译问题**
+4. 编译内核和设备树（rockchip_linux_defconfig）
+5. 生成 `boot.img`（包含 kernel、dtb、ramdisk）
+
+支持的设备树：
+- `rk3399-orangepi.dtb`
+- `rk3399-orangepi-4.dtb`
+- `rk3399-orangepi-rk3399.dtb`
+
+### 3. 构建 Ubuntu Rootfs
+
+```bash
+# XFCE 桌面环境（默认）
+python3 scripts/build_rootfs.py
+
+# 最小系统（无桌面）
+python3 scripts/build_rootfs.py --minimal
+```
+
+XFCE 桌面版包含：
+- Ubuntu 20.04 Base
+- XFCE 桌面环境
+- 中文字体和输入法（fcitx）
+- 常用应用（Firefox、文件管理器等）
+- 网络管理工具
+
+最小系统版包含：
+- Ubuntu 20.04 Base
+- 基础命令行工具
+- 网络工具
+
+**注意**：需要 root 权限（使用 debootstrap 和 chroot）。
+
+### 4. 生成 boot.img
+
+```bash
+# 使用默认设备树（rk3399-orangepi-4）
+bash scripts/make_bootimg.sh
+
+# 指定设备树
+bash scripts/make_bootimg.sh rk3399-orangepi
+bash scripts/make_bootimg.sh rk3399-orangepi-4
+bash scripts/make_bootimg.sh rk3399-orangepi-rk3399
+```
+
+打包内容：
+- Linux 内核镜像
+- 指定的设备树（.dtb）
+- Initramfs（如果存在）
+
+## 清理功能
+
+```bash
+# 清理编译产物，保留源码（约 54MB）
+python3 scripts/clean.py --clean
+
+# 深度清理，删除所有源码和工具链（约 6.2GB）
+python3 scripts/clean.py --distclean
+
+# 预览删除内容，不实际删除
+python3 scripts/clean.py --dry-run
+```
+
+清理级别：
+- `--clean`: 删除 `build/` 目录
+- `--distclean`: 删除源码（u-boot/、linux/、toolchain/、rootfs/）
+
+## 项目结构
+
+```
+rk3399_build_python/
+├── scripts/                    # 构建脚本
+│   ├── build_all.py            # 一键构建脚本
+│   ├── build_uboot.py          # U-Boot 构建
+│   ├── build_kernel.py         # 内核构建（含 DTS 修复）
+│   ├── build_rootfs.py         # Rootfs 构建
+│   ├── clean.py                # 清理脚本
+│   ├── make_bootimg.sh         # boot.img 生成
+│   └── flash_bootloader.sh     # Bootloader 烧录
+├── src/rkpyimg/                # Python 固件打包工具
+│   ├── tools/
+│   │   ├── boot_merger.py      # DDR + Miniloader 合并
+│   │   ├── trust_merger.py     # BL31 + BL32 合并
+│   │   └── loaderimage.py      # U-Boot 镜像打包
+│   └── core/                   # 核心库（INI 解析、ELF 处理等）
+├── RKBOOT/                     # U-Boot 配置文件
+│   └── RK3399MINIALL.ini
+├── RKTRUST/                    # Trust 镜像配置
+│   └── RK3399TRUST.ini
+├── bin/rk33/                   # Rockchip 固件
+│   ├── rk3399_ddr_800MHz_v1.25.bin
+│   ├── rk3399_miniloader_v1.26.bin
+│   ├── rk3399_bl31_v1.35.elf
+│   └── rk3399_bl32_v2.01.bin
+├── build/                      # 构建输出目录（自动生成）
+└── docs/                       # 文档
+```
+
+## 技术亮点
+
+### Device Tree 自动修复
+
+OrangePi 的设备树源文件（.dts）存在但 Makefile 中缺少编译规则，`build_kernel.py` 会自动检测并修复：
+
+```bash
+# 自动检测 arch/arm64/boot/dts/rockchip/*.dts
+# 自动添加缺失的编译规则到 Makefile
+# 幂等性设计，多次运行安全
+```
+
+### 纯 Python 打包工具
+
+本项目实现了 Rockchip 官方 C 工具的完整功能：
+
+| 功能 | 官方工具 | rkpyimg | 兼容性 |
+|------|----------|---------|--------|
+| DDR + Miniloader 合并 | boot_merger (C) | boot_merger.py | ✅ 字节级一致 |
+| BL31 + BL32 合并 | trust_merger (C) | trust_merger.py | ✅ 字节级一致 |
+| U-Boot 镜像打包 | loaderimage (C) | loaderimage.py | ✅ 字节级一致 |
+
+优势：
+- 跨平台支持（Windows/Linux/macOS）
+- 完整类型注解和现代 API
+- 易于集成到 CI/CD 流程
+- 详细的二进制格式文档
+
+## 镜像布局
+
+Rockchip RK3399 标准分区布局：
+
+```
+扇区        偏移量      大小      分区           内容
+------      -------     -----     ---------      -------
+64          32KB        4MB       idbloader      DDR 初始化 + Miniloader
+16384       8MB         4MB       uboot          U-Boot 引导程序
+24576       12MB        4MB       trust          ARM Trusted Firmware + OP-TEE
+32768       16MB        32MB      boot           内核 + 设备树 + Initramfs
+98304       48MB        ...       rootfs         根文件系统 (ext4)
+```
+
+## 高级用法
 
 ### rkpyimg 命令行工具
 
-rkpyimg 提供三个子命令，对应 Rockchip 的三个官方工具：
+除了集成在构建脚本中，rkpyimg 也可以独立使用：
 
 ```bash
-rkpyimg loaderimage --help    # U-Boot/Trust 打包工具
-rkpyimg boot-merger --help    # Boot loader 合并工具
-rkpyimg trust-merger --help   # Trust 镜像合并工具
-```
+# 安装 rkpyimg
+pip install -e .
 
-## 使用指南
+# 打包 idbloader.img
+rkpyimg boot-merger pack RKBOOT/RK3399MINIALL.ini -o idbloader.img
 
-### 1. loaderimage - 打包 U-Boot 镜像
+# 打包 trust.img
+rkpyimg trust-merger pack RKTRUST/RK3399TRUST.ini -o trust.img
 
-**功能**：将 u-boot.bin 打包为带 Rockchip 头部的 uboot.img
-
-```bash
-# 打包 U-Boot（默认加载地址 0x200000）
+# 打包 uboot.img
 rkpyimg loaderimage pack u-boot.bin uboot.img 0x200000
-
-# 打包 Trust OS（加载地址 0x8400000）
-rkpyimg loaderimage pack trust.bin trust.img --type trust
-
-# 解包镜像
-rkpyimg loaderimage unpack uboot.img u-boot.bin
 
 # 查看镜像信息
 rkpyimg loaderimage info uboot.img
+
+# 解包镜像
+rkpyimg boot-merger unpack idbloader.img -o output_dir
+rkpyimg trust-merger unpack trust.img -o output_dir
 ```
 
-**输出示例**：
+### Python API
+
+```python
+from rkpyimg.tools.boot_merger import BootMerger
+from rkpyimg.tools.trust_merger import TrustMerger
+from rkpyimg.tools.loaderimage import pack_loader_image
+
+# 打包 idbloader
+merger = BootMerger.from_ini("RKBOOT/RK3399MINIALL.ini")
+merger.pack("idbloader.img")
+
+# 打包 trust
+trust = TrustMerger.from_ini("RKTRUST/RK3399TRUST.ini")
+trust.pack("trust.img")
+
+# 打包 uboot
+pack_loader_image("u-boot.bin", "uboot.img", load_addr=0x200000)
 ```
-Packing loader image (type=uboot, addr=0x200000):
-  Input:  u-boot.bin (520192 bytes)
-  Output: uboot.img
-  Header: 2048 bytes
-  Data:   520192 bytes
-  Total:  522240 bytes
-The image info:
-Rollback index is 0
-Load Addr is 0x200000
-✓ Packed: uboot.img
-```
 
----
+详细 API 文档请参考 `docs/` 目录。
 
-### 2. boot-merger - 合并 DDR 和 Miniloader
+### 自定义配置
 
-**功能**：根据 INI 配置文件，合并 DDR 初始化代码和 miniloader 为 idbloader.img
-
-#### 2.1 准备 INI 配置文件
-
-示例：`RKBOOT/RK3399MINIALL.ini`
+修改 INI 配置文件以使用不同的固件版本：
 
 ```ini
-[CHIP_NAME]
-NAME=RK330C
-
-[VERSION]
-MAJOR=2
-MINOR=58
-
+# RKBOOT/RK3399MINIALL.ini
 [CODE471_OPTION]
 NUM=1
-Path1=bin/rk33/rk3399_ddr_800MHz_v1.25.bin
+Path1=bin/rk33/rk3399_ddr_800MHz_v1.25.bin  # DDR 固件
 
 [CODE472_OPTION]
 NUM=1
-Path1=bin/rk33/rk3399_miniloader_v1.26.bin
-
-[OUTPUT]
-PATH=rk3399_loader_v1.25.126.bin
+Path1=bin/rk33/rk3399_miniloader_v1.26.bin  # Miniloader 固件
 ```
-
-#### 2.2 打包镜像
-
-```bash
-# 从 INI 文件打包
-rkpyimg boot-merger pack RKBOOT/RK3399MINIALL.ini
-
-# 指定输出路径
-rkpyimg boot-merger pack RKBOOT/RK3399MINIALL.ini -o idbloader.img
-
-# 启用 RC4 加密（可选）
-rkpyimg boot-merger pack RKBOOT/RK3399MINIALL.ini --rc4
-
-# 详细输出
-rkpyimg boot-merger pack RKBOOT/RK3399MINIALL.ini --verbose
-```
-
-#### 2.3 解包镜像
-
-```bash
-# 解包到默认目录 (unpacked/)
-rkpyimg boot-merger unpack idbloader.img
-
-# 解包到指定目录
-rkpyimg boot-merger unpack idbloader.img -o output_dir
-```
-
-**输出示例**：
-```
-Boot Merger - Pack from INI
-  Chip: RK330C (0x33304343)
-  Version: 2.58 (BCD)
-  Output: idbloader.img
-  RC4 Encryption: Disabled
-
-Loading CODE471 entries (DDR init):
-  [0] rk3399_ddr_800MHz_v1.25.bin (143360 bytes)
-
-Loading CODE472 entries (Miniloader):
-  [0] rk3399_miniloader_v1.26.bin (65536 bytes)
-
-Writing boot header (102 bytes)
-Writing entries (108 bytes total, 2 entries)
-Writing CODE471 data (143360 bytes, aligned to 145408)
-Writing CODE472 data (65536 bytes, aligned to 67584)
-Writing CRC32 checksum: 0xABCD1234
-
-✓ Packed: idbloader.img (213302 bytes)
-```
-
----
-
-### 3. trust-merger - 合并 BL31 和 BL32
-
-**功能**：根据 INI 配置文件，合并 ARM Trusted Firmware (BL31) 和 OP-TEE (BL32) 为 trust.img
-
-#### 3.1 准备 INI 配置文件
-
-示例：`RKTRUST/RK3399TRUST.ini`
 
 ```ini
-[VERSION]
-MAJOR=1
-MINOR=0
-
+# RKTRUST/RK3399TRUST.ini
 [BL31_OPTION]
 SEC=1
-PATH=bin/rk33/rk3399_bl31_v1.35.elf
+PATH=bin/rk33/rk3399_bl31_v1.35.elf         # ARM Trusted Firmware
 ADDR=0x10000
 
 [BL32_OPTION]
 SEC=1
-PATH=bin/rk33/rk3399_bl32_v2.01.bin
+PATH=bin/rk33/rk3399_bl32_v2.01.bin         # OP-TEE Secure OS
 ADDR=0x8400000
-
-[OUTPUT]
-PATH=trust.img
 ```
 
-#### 3.2 打包镜像
+## 常见问题
+
+### Q: 如何获取 Rockchip 固件文件？
+
+A: 固件文件已包含在 `bin/rk33/` 目录中。如需更新，可从以下来源获取：
+- [rkbin](https://github.com/rockchip-linux/rkbin) - Rockchip 官方仓库
+- [Armbian 构建脚本](https://github.com/armbian/build)
+- OrangePi 官方 SDK
+
+### Q: 为什么需要 root 权限构建 rootfs？
+
+A: Ubuntu rootfs 构建使用 `debootstrap` 和 `chroot`，需要 root 权限创建系统镜像。可以使用 `--skip-rootfs` 跳过此步骤。
+
+### Q: Device Tree 自动修复是如何工作的？
+
+A: `build_kernel.py` 会检查 `arch/arm64/boot/dts/rockchip/` 中的 `.dts` 文件，如果发现 OrangePi 相关文件但 Makefile 中缺少编译规则，会自动添加。此修复具有幂等性，多次运行安全。
+
+### Q: 生成的镜像可以在哪些设备上使用？
+
+A: 本项目针对 RK3399 芯片，已在 Orange Pi RK3399 和 Orange Pi 4 上测试通过。其他 RK3399 开发板理论上也可使用，但可能需要调整设备树。
+
+### Q: 如何验证生成的镜像？
+
+A: 可以使用以下命令验证：
 
 ```bash
-# 从 INI 文件打包（使用默认 RSA/SHA 模式）
-rkpyimg trust-merger pack RKTRUST/RK3399TRUST.ini
+# 查看镜像信息
+rkpyimg loaderimage info build/uboot.img
 
-# 指定输出路径
-rkpyimg trust-merger pack RKTRUST/RK3399TRUST.ini -o trust.img
+# 解包并对比
+rkpyimg boot-merger unpack build/idbloader.img -o verify/
+ls -lh verify/
 
-# 指定 RSA 和 SHA 模式
-rkpyimg trust-merger pack RKTRUST/RK3399TRUST.ini --rsa 4 --sha 2
-
-# 指定镜像大小（KB）
-rkpyimg trust-merger pack RKTRUST/RK3399TRUST.ini --size 1024
-
-# 详细输出
-rkpyimg trust-merger pack RKTRUST/RK3399TRUST.ini --verbose
+# 对比 SHA256
+sha256sum build/*.img
 ```
 
-**RSA/SHA 模式说明**：
-- RSA: `0`=none, `1`=1024, `2`=2048, `3`=2048 PSS, `4`=2048 new (默认)
-- SHA: `0`=none, `1`=SHA1, `2`=SHA256 (默认), `3`=SHA512
+### Q: 支持哪些 Python 版本？
 
-#### 3.3 解包镜像
-
-```bash
-# 解包到当前目录
-rkpyimg trust-merger unpack trust.img
-
-# 解包到指定目录
-rkpyimg trust-merger unpack trust.img -o output_dir
-```
-
-**输出示例**：
-```
-Trust Merger - Pack from INI
-  Version: 1.0 (BCD)
-  Output: trust.img
-  RSA Mode: 4 (RSA 2048 new)
-  SHA Mode: 2 (SHA256)
-  Size: 1024 KB
-
-Loading components:
-  [BL31] bin/rk33/rk3399_bl31_v1.35.elf
-    -> Extracted PT_LOAD segment: 65536 bytes @ 0x10000
-  [BL32] bin/rk33/rk3399_bl32_v2.01.bin
-    -> Loaded binary: 143360 bytes @ 0x8400000
-
-Writing trust header (2048 bytes)
-Writing component data (96 bytes, 2 components)
-Writing trust components (32 bytes)
-Writing BL31 component (65536 bytes, aligned to 67584)
-Writing BL32 component (143360 bytes, aligned to 145408)
-
-✓ Packed: trust.img (215168 bytes)
-```
-
----
-
-## 完整固件构建流程
-
-以 RK3399 为例，构建完整的固件需要以下步骤：
-
-### 步骤 1: 准备二进制文件
-
-确保你有以下文件：
-```
-project/
-├── bin/rk33/
-│   ├── rk3399_ddr_800MHz_v1.25.bin      # DDR 初始化
-│   ├── rk3399_miniloader_v1.26.bin      # Miniloader
-│   ├── rk3399_bl31_v1.35.elf            # ARM Trusted Firmware
-│   └── rk3399_bl32_v2.01.bin            # OP-TEE
-├── u-boot.bin                           # U-Boot 二进制
-├── RKBOOT/RK3399MINIALL.ini             # Boot 配置
-└── RKTRUST/RK3399TRUST.ini              # Trust 配置
-```
-
-### 步骤 2: 打包各个镜像
-
-```bash
-# 1. 打包 idbloader.img (DDR + Miniloader)
-rkpyimg boot-merger pack RKBOOT/RK3399MINIALL.ini -o idbloader.img
-
-# 2. 打包 uboot.img
-rkpyimg loaderimage pack u-boot.bin uboot.img 0x200000
-
-# 3. 打包 trust.img (BL31 + BL32)
-rkpyimg trust-merger pack RKTRUST/RK3399TRUST.ini -o trust.img
-```
-
-### 步骤 3: 烧录到设备
-
-使用 `dd` 命令将镜像写入 SD 卡或 eMMC：
-
-```bash
-# 烧录 idbloader.img 到扇区 64 (32KB 偏移)
-sudo dd if=idbloader.img of=/dev/sdX seek=64 conv=notrunc
-
-# 烧录 uboot.img 到扇区 16384 (8MB 偏移)
-sudo dd if=uboot.img of=/dev/sdX seek=16384 conv=notrunc
-
-# 烧录 trust.img 到扇区 24576 (12MB 偏移)
-sudo dd if=trust.img of=/dev/sdX seek=24576 conv=notrunc
-```
-
-**注意**：`/dev/sdX` 替换为实际设备名（如 `/dev/sdb`）
-
----
-
-## 验证构建结果
-
-### 1. 验证镜像信息
-
-```bash
-# 查看 uboot.img 信息
-rkpyimg loaderimage info uboot.img
-
-# 解包验证
-rkpyimg loaderimage unpack uboot.img u-boot-extracted.bin
-diff u-boot.bin u-boot-extracted.bin  # 应该一致
-```
-
-### 2. 验证 boot-merger 输出
-
-```bash
-# 解包并检查
-rkpyimg boot-merger unpack idbloader.img -o verify_boot
-
-# 检查解包的文件
-ls -lh verify_boot/
-# 应该看到 CODE471.bin, CODE472.bin 等文件
-
-# 验证文件大小和内容
-md5sum bin/rk33/rk3399_ddr_800MHz_v1.25.bin verify_boot/CODE471.bin
-```
-
-### 3. 验证 trust-merger 输出
-
-```bash
-# 解包并检查
-rkpyimg trust-merger unpack trust.img -o verify_trust
-
-# 检查解包的组件
-ls -lh verify_trust/
-# 应该看到 BL31, BL32 等文件
-```
-
-### 4. 二进制对比验证
-
-如果你有官方工具生成的镜像，可以对比：
-
-```bash
-# 使用官方 C 工具生成
-./boot_merger RKBOOT/RK3399MINIALL.ini
-mv idbloader.img idbloader_official.img
-
-# 使用 rkpyimg 生成
-rkpyimg boot-merger pack RKBOOT/RK3399MINIALL.ini -o idbloader_python.img
-
-# 对比两个文件
-xxd idbloader_official.img > official.hex
-xxd idbloader_python.img > python.hex
-diff official.hex python.hex
-```
-
----
-
-## Python API 使用
-
-除了命令行工具，rkpyimg 也提供 Python API：
-
-### loaderimage API
-
-```python
-from rkpyimg.tools.loaderimage import pack_loader_image, unpack_loader_image, get_loader_info
-
-# 打包
-pack_loader_image(
-    "u-boot.bin",
-    "uboot.img",
-    load_addr=0x200000,
-    image_type="uboot",
-    version=0
-)
-
-# 解包
-unpack_loader_image("uboot.img", "u-boot-extracted.bin")
-
-# 获取信息
-header = get_loader_info("uboot.img")
-print(f"Load address: 0x{header.loader_load_addr:08X}")
-```
-
-### boot_merger API
-
-```python
-from rkpyimg.tools.boot_merger import BootMerger
-
-# 从 INI 文件加载
-merger = BootMerger.from_ini("RKBOOT/RK3399MINIALL.ini")
-
-# 启用 RC4 加密（可选）
-merger.enable_rc4 = True
-
-# 打包
-merger.pack("idbloader.img")
-
-# 解包
-merger.unpack("idbloader.img", "output_dir")
-```
-
-### trust_merger API
-
-```python
-from rkpyimg.tools.trust_merger import TrustMerger
-
-# 从 INI 文件加载
-merger = TrustMerger.from_ini("RKTRUST/RK3399TRUST.ini")
-
-# 配置 RSA/SHA 模式
-merger.set_rsa_mode(4)  # RSA 2048 new
-merger.set_sha_mode(2)  # SHA256
-merger.size = 1024      # 1024 KB
-
-# 打包
-merger.pack("trust.img")
-
-# 解包
-files = TrustMerger.unpack("trust.img", "output_dir")
-for name, path in files.items():
-    print(f"{name}: {path}")
-```
-
----
+A: Python 3.10+ （使用了现代类型注解语法）
 
 ## 开发和测试
 
@@ -528,52 +373,6 @@ ruff check src/ tests/
 ruff format src/ tests/
 ```
 
----
-
-## 常见问题
-
-### Q: 生成的镜像和官方工具不一致？
-
-A: 检查以下几点：
-1. INI 配置文件路径是否正确
-2. 二进制文件版本是否一致
-3. 是否启用了 RC4 加密（官方工具默认禁用）
-4. 使用 `--verbose` 查看详细输出
-
-### Q: 支持哪些 Python 版本？
-
-A: Python 3.10+ （使用了类型注解的新语法）
-
-### Q: 如何获取 DDR/miniloader/BL31/BL32 二进制文件？
-
-A: 可以从以下来源获取：
-- Rockchip 官方 SDK
-- U-Boot 仓库（rkbin 分支）
-- Armbian 构建脚本
-- 设备厂商（OrangePi、Firefly 等）
-
-### Q: 是否支持签名（RSA）？
-
-A: 目前支持 RSA 模式配置，但不实现实际签名功能。镜像会预留 RSA 签名区域。
-
----
-
-## 镜像布局参考
-
-Rockchip RK3399 标准分区布局：
-
-```
-扇区        偏移量      大小      分区           内容
-------      -------     -----     ---------      -------
-64          32KB        4MB       idbloader      DDR 初始化 + Miniloader
-16384       8MB         4MB       uboot          U-Boot 引导程序
-24576       12MB        4MB       trust          ARM Trusted Firmware + OP-TEE
-32768       16MB        32MB      boot           内核 + 设备树 + Initramfs
-98304       48MB        ...       rootfs         根文件系统 (ext4)
-```
-
----
-
 ## 参与贡献
 
 欢迎贡献代码、报告问题或提出建议！
@@ -588,31 +387,25 @@ Rockchip RK3399 标准分区布局：
 
 ### 需要帮助的方向
 
-- [ ] 添加更多芯片支持（RK3588, RK3568 等）
-- [ ] 实现 GPT 分区和完整镜像构建
-- [ ] 添加更多测试用例
-- [ ] 完善文档和教程
-- [ ] 性能优化
-
----
+- [ ] 完善测试用例覆盖率
+- [ ] 添加更多设备树支持
+- [ ] 优化 rootfs 构建速度
+- [ ] 实现 GPT 分区表支持
+- [ ] 添加 CI/CD 自动化测试
 
 ## 许可证
 
 MIT 许可证 - 详见 [LICENSE](LICENSE)
 
----
-
 ## 致谢
 
-- [Rockchip](https://www.rock-chips.com/) - 原始 C 工具
+- [Rockchip](https://www.rock-chips.com/) - 原始 C 工具和固件
 - [OrangePi](http://www.orangepi.org/) - RK3399 参考实现
-- [Armbian](https://www.armbian.com/) 社区 - 文档贡献
-- [U-Boot](https://github.com/u-boot/u-boot) - rkbin 二进制文件
-
----
+- [Armbian](https://www.armbian.com/) 社区 - 文档和构建经验
+- [U-Boot](https://github.com/u-boot/u-boot) - Bootloader 源码
 
 ## 相关项目
 
 - [rkbin](https://github.com/rockchip-linux/rkbin) - Rockchip 官方二进制文件
 - [rkdeveloptool](https://github.com/rockchip-linux/rkdeveloptool) - Rockchip USB 烧录工具
-- [pyUBoot](https://github.com/molejar/pyUBoot) - U-Boot 镜像操作工具
+- [Armbian](https://github.com/armbian/build) - ARM 设备构建框架
