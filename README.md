@@ -63,6 +63,51 @@ pip install rkpyimg
 
 ## 快速开始
 
+### 完整构建流程
+
+本项目提供完整的 RK3399 系统构建流程，包括：
+1. U-Boot 引导程序编译和打包
+2. Linux 内核编译
+3. Ubuntu 根文件系统构建
+4. 镜像烧录
+
+```bash
+# 1. 完整构建（需要 sudo 权限用于 rootfs 构建）
+python3 scripts/build_all.py
+
+# 2. 仅构建 bootloader（不构建 rootfs）
+python3 scripts/build_all.py --skip-rootfs
+
+# 3. 构建指定的 Ubuntu 版本
+python3 scripts/build_all.py \
+    --rootfs-distro focal \    # Ubuntu 20.04
+    --rootfs-type server \      # Server 或 Desktop
+    --rootfs-mirror cn          # 使用中国镜像
+
+# 4. 清理构建产物
+python3 scripts/build_all.py --clean
+
+# 详细文档见下方各章节
+```
+
+### 单独构建组件
+
+```bash
+# 仅构建 U-Boot
+python3 scripts/build_uboot.py
+
+# 仅构建 Linux 内核
+python3 scripts/build_kernel.py
+
+# 仅构建根文件系统（需要 root 权限）
+sudo python3 scripts/build_rootfs.py --distro focal --type server
+
+# 仅打包 bootloader 镜像（使用已有的 u-boot.bin）
+python3 scripts/build_bootloader.py
+```
+
+### rkpyimg 命令行工具
+
 rkpyimg 提供三个子命令，对应 Rockchip 的三个官方工具：
 
 ```bash

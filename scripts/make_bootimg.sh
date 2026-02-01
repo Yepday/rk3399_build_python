@@ -100,9 +100,16 @@ fi
 # Step 2: Generate boot.img from Image + resource.img
 echo ""
 echo -e "${CYAN}[2/2]${NC} Generating boot.img from Image + resource.img..."
+
+# Kernel command line - specify rootfs partition
+# Using mmcblk0p4 (SD card partition 4 on RK3399)
+# Note: Based on boot log, mmc0=mmcblk0=SD card, mmc1=mmcblk1=eMMC
+CMDLINE="earlycon=uart8250,mmio32,0xff1a0000 swiotlb=1 console=ttyFIQ0 root=/dev/mmcblk0p4 rootwait rootfstype=ext4 rw"
+
 "$KERNEL_SRC/scripts/mkbootimg" \
     --kernel "$IMAGE" \
     --second "$RESOURCE_IMG" \
+    --cmdline "$CMDLINE" \
     -o "$BOOT_IMG"
 
 if [ -f "$BOOT_IMG" ]; then

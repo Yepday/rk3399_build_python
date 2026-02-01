@@ -1,255 +1,120 @@
 # CLAUDE.md
 
-本文件为 Claude Code 提供项目指导，确保跨会话的工作连续性。
+本文件为 Claude Code 提供项目维护指导。
 
 ## 项目概述
 
-**rkpyimg** 是一个用纯 Python 实现的 Rockchip 固件打包工具链，旨在替代官方 C 语言工具（boot_merger, trust_merger, loaderimage 等）。
+RK3399 构建系统 - 用 Python 实现的 Rockchip RK3399 完整构建流程，支持 U-Boot、Kernel、Rootfs 的自动化构建和打包。
 
-### 核心价值
-- **首个 Python 实现**：填补 Rockchip 工具链 Python 生态空白
-- **跨平台**：Windows/Linux/macOS 均可运行
-- **现代化**：Python 3.10+、类型注解、现代包管理
-- **教育价值**：详细文档化二进制格式和打包原理
+### 核心功能
+- **自动化构建**：一键构建 U-Boot、Linux Kernel、Rootfs
+- **桌面环境支持**：集成 XFCE 桌面环境的 Ubuntu rootfs
+- **完整工具链**：包含 bootloader、kernel、rootfs 打包工具
+- **设备树修复**：自动修复 OrangePi 设备树编译问题
 
-### 目标用户
-- OrangePi/Firefly/Radxa 等 Rockchip 开发板用户
-- Armbian 贡献者
-- 嵌入式 Linux 学习者
-- 需要自定义固件的开发者
+### 目标设备
+- Orange Pi RK3399
+- Orange Pi 4
+- 其他 RK3399 开发板
 
 ## 项目结构
 
 ```
-rkpyimg/
-├── CLAUDE.md              # Claude Code 指导（本文件）
-├── PROGRESS.md            # 工作进度记录（每次会话更新）
-├── README.md              # 项目说明（面向用户）
-├── pyproject.toml         # Python 项目配置
-├── src/
-│   └── rkpyimg/
-│       ├── __init__.py
-│       ├── core/              # 核心功能模块
-│       │   ├── __init__.py
-│       │   ├── header.py      # Rockchip Header 处理
-│       │   ├── ini_parser.py  # INI 配置文件解析
-│       │   └── checksum.py    # CRC/校验和计算
-│       ├── tools/             # 官方工具 Python 实现
-│       │   ├── __init__.py
-│       │   ├── boot_merger.py   # boot_merger 实现
-│       │   ├── trust_merger.py  # trust_merger 实现
-│       │   └── loaderimage.py   # loaderimage 实现
-│       ├── image/             # 镜像构建
-│       │   ├── __init__.py
-│       │   ├── partition.py   # GPT 分区处理
-│       │   └── builder.py     # 镜像构建器
-│       └── cli/               # 命令行接口
-│           ├── __init__.py
-│           └── main.py
-├── tests/                 # 单元测试
-│   ├── test_header.py
-│   ├── test_ini_parser.py
-│   └── ...
-└── docs/                  # 详细文档
-    ├── rk_header_format.md    # Header 格式说明
-    ├── ini_file_format.md     # INI 文件格式
-    └── packing_theory.md      # 打包原理深度解析
+rk3399_build_python/
+├── scripts/               # 构建脚本
+│   ├── build_all.py       # 全自动构建脚本
+│   ├── build_kernel.py    # 内核构建
+│   ├── build_uboot.py     # U-Boot 构建
+│   ├── build_rootfs.py    # Rootfs 构建
+│   ├── clean.py           # 清理脚本
+│   ├── make_bootimg.sh    # boot.img 生成
+│   └── flash_bootloader.sh # Bootloader 烧录
+├── RKBOOT/                # U-Boot 配置文件
+├── RKTRUST/               # Trust 镜像配置
+├── bin/rk33/              # Rockchip 二进制固件
+├── build/                 # 构建输出目录
+└── docs/                  # 文档
 ```
 
-## 开发命令
+## 常用命令
 
 ```bash
-# 安装开发依赖
-pip install -e ".[dev]"
+# 完整构建流程
+python3 scripts/build_all.py
 
-# 运行测试
-pytest
+# 分步构建
+python3 scripts/build_uboot.py              # 编译 U-Boot
+python3 scripts/build_kernel.py             # 编译内核和设备树
+python3 scripts/build_rootfs.py             # 构建 Ubuntu rootfs
+bash scripts/make_bootimg.sh rk3399-orangepi-4  # 生成 boot.img
 
-# 类型检查
-mypy src/
+# 烧录
+bash scripts/flash_bootloader.sh            # 烧录 bootloader 到 eMMC
 
-# 格式化
-ruff format src/ tests/
-ruff check src/ tests/ --fix
-
-# CLI 运行
-python -m rkpyimg --help
-rkpyimg pack --help
+# 清理命令
+python3 scripts/clean.py --clean            # 清理编译产物，保留源码
+python3 scripts/clean.py --distclean        # 深度清理，删除所有源码和工具链
+python3 scripts/clean.py --dry-run          # 预览删除内容
 ```
 
-## 核心技术细节
+## 清理功能
 
-### Rockchip 固件打包原理
+- `--clean`：删除 build/ 目录（约 54MB），保留源码
+- `--distclean`：删除所有源码和工具链（约 6.2GB），重置项目
+- `--dry-run`：预览删除内容，不实际删除
 
-Rockchip SoC 的 BootROM 需要特定格式的固件镜像。关键点：
+## 技术说明
 
-#### 1. RK Header 格式（所有镜像共用）
-```
-偏移量    大小    说明
-0x000     4B      Magic: 0x0FF0AA55（小端）
-0x004     4B      保留
-0x008     4B      Chip ID (如 RK33)
-0x00C     4B      代码大小
-0x010     4B      加载地址
-0x014     ...     其他元数据
-```
+### Device Tree 自动修复
 
-#### 2. loaderimage 工具功能
-将 u-boot.bin 封装为 uboot.img：
-- 添加 RK Header
-- 计算并添加 CRC 校验
-- 支持指定加载地址和芯片类型
+OrangePi 的 DTS 源文件存在但 Makefile 中缺少编译规则时，`build_kernel.py` 会自动修复：
+- 检测并添加缺失的 Orange Pi 编译规则
+- 在编译 DTB 之前自动执行
+- 具有幂等性，多次运行安全
 
-命令格式：
+### Rootfs 构建
+
+支持两种桌面环境构建：
+
+1. **XFCE 桌面**（默认）
+   - 完整的 Ubuntu base + XFCE 桌面环境
+   - 包含中文字体、输入法、常用应用
+   - 适合日常使用
+
+2. **最小系统**
+   - 仅包含 Ubuntu base 系统
+   - 无桌面环境
+   - 适合服务器或嵌入式应用
+
+构建命令：
 ```bash
-loaderimage --pack --uboot u-boot.bin uboot.img 0x200000 --size 1024 1
+# XFCE 桌面版
+python3 scripts/build_rootfs.py
+
+# 最小系统
+python3 scripts/build_rootfs.py --minimal
 ```
 
-#### 3. boot_merger 工具功能
-合并 DDR 初始化代码 + miniloader → idbloader.img/loader.bin
+### Boot.img 生成
 
-读取 RKBOOT/*.ini 配置：
-```ini
-[CHIP_NAME]
-NAME=RK330C
+支持多个 OrangePi RK3399 设备树：
+- `rk3399-orangepi.dtb`
+- `rk3399-orangepi-4.dtb`
+- `rk3399-orangepi-rk3399.dtb`
 
-[VERSION]
-MAJOR=2
-MINOR=58
+## 构建产物
 
-[CODE471_OPTION]
-NUM=1
-Path1=bin/rk33/rk3399_ddr_800MHz_v1.25.bin
+成功构建后，`build/` 目录包含：
+- `idbloader.img` - DDR 初始化 + Miniloader
+- `uboot.img` - U-Boot bootloader
+- `trust.img` - ARM Trusted Firmware
+- `boot.img` - Kernel + Device Tree + Ramdisk
+- `rootfs.img` - 根文件系统镜像
 
-[CODE472_OPTION]
-NUM=1
-Path1=bin/rk33/rk3399_miniloader_v1.26.bin
+## 文档
 
-[OUTPUT]
-PATH=rk3399_loader_v1.25.126.bin
-```
-
-#### 4. trust_merger 工具功能
-合并 BL31(ATF) + BL32(OP-TEE) → trust.img
-
-读取 RKTRUST/*.ini 配置：
-```ini
-[VERSION]
-MAJOR=1
-MINOR=0
-
-[BL31_OPTION]
-SEC=1
-PATH=bin/rk33/rk3399_bl31_v1.35.elf
-ADDR=0x10000
-
-[BL32_OPTION]
-SEC=1
-PATH=bin/rk33/rk3399_bl32_v2.01.bin
-ADDR=0x8400000
-
-[OUTPUT]
-PATH=trust.img
-```
-
-### 支持的 Rockchip SoC
-
-| 芯片 | 状态 | 说明 |
-|------|------|------|
-| RK3399 | 优先 | OrangePi RK3399, Firefly |
-| RK3588/RK3588S | 计划中 | OrangePi 5 |
-| RK3568/RK3566 | 计划中 | 主流中端 |
-| RK3328 | 计划中 | Rock64 |
-| RK3308 | 计划中 | 低功耗音频 |
-
-## 开发路线图
-
-### Phase 1: 核心差异化（当前）
-- [ ] RK Header 解析/生成 (core/header.py)
-- [ ] INI 配置解析 (core/ini_parser.py)
-- [ ] CRC/校验和计算 (core/checksum.py)
-- [ ] loaderimage Python 实现 (tools/loaderimage.py)
-- [ ] boot_merger Python 实现 (tools/boot_merger.py)
-- [ ] trust_merger Python 实现 (tools/trust_merger.py)
-
-### Phase 2: 完整构建
-- [ ] GPT 分区创建 (image/partition.py)
-- [ ] 镜像写入 (image/builder.py)
-- [ ] CLI 接口 (cli/main.py)
-- [ ] 端到端构建流程
-
-### Phase 3: 生态完善
-- [ ] 多芯片支持扩展
-- [ ] GitHub Actions CI/CD
-- [ ] PyPI 发布
-- [ ] 文档网站
-
-## 参考资源
-
-### 完整原构建项目（优先参考）
-**位置**：`/home/lyc/Desktop/OrangePiRK3399_Merged`
-
-这是一个完整的 OrangePi RK3399 构建项目，包含所有必需的组件和配置文件：
-- 完整的 RKBOOT/*.ini 配置文件
-- 完整的 RKTRUST/*.ini 配置文件
-- 所有二进制组件（DDR init、miniloader、BL31、BL32 等）
-- 完整的构建脚本和工具链
-
-**使用规则**：
-- 当构建项目时缺少组件或配置，可以从此项目中查找和复制
-- 可以用来验证 Python 实现的输出是否正确
-- 参考其目录结构和文件组织方式
-
-### 原始 C 代码（参考实现）
-位于 `/home/lyc/Desktop/build_rk3399/uboot/tools/rockchip/`:
-- `loaderimage.c` - loader 镜像打包
-- `boot_merger.c` - boot 合并器
-- `trust_merger.c` - trust 合并器
-
-### 参考文档
-- `/home/lyc/Desktop/build_rk3399/uboot/固件打包原理深度解析.md`
-- `/home/lyc/Desktop/build_rk3399/uboot/docs/loader镜像打包教程.md`
-- `/home/lyc/Desktop/build_rk3399/uboot/docs/trust镜像打包教程.md`
-- `/home/lyc/Desktop/build_rk3399/uboot/docs/uboot镜像打包教程.md`
-
-### 关键数据结构（来自 C 源码）
-
-```c
-// loaderimage.c 中的 header 结构
-struct header_info {
-    uint32_t magic;      // 0x0FF0AA55
-    uint8_t  reserved[4];
-    uint32_t signature;  // 芯片 ID
-    uint32_t check_size;
-    uint32_t load_addr;
-    // ...
-};
-
-// boot_merger.c 中的 loader entry
-typedef struct {
-    char name[20];
-    char path[256];
-    uint32_t offset;
-    uint32_t size;
-    uint32_t addr;
-} entry_t;
-```
-
-## 工作流程
-
-### 每次会话开始时
-1. 阅读 `PROGRESS.md` 了解上次进度
-2. 阅读本文件了解项目结构和技术细节
-3. 继续未完成的任务
-
-### 每次会话结束时
-1. 更新 `PROGRESS.md` 记录完成的工作
-2. 记录下一步计划
-3. 记录遇到的问题或疑点
-
-### 开发原则
-1. **渐进式开发**：先实现最小可用功能，再逐步扩展
-2. **类型注解**：所有公开 API 必须有类型注解
-3. **文档同步**：代码和文档同步更新
-4. **参考 C 源码**：实现时对照原始 C 代码确保兼容性
-5. **暂时跳过单元测试**：当前环境 Python 版本较低，暂不运行测试
+详细文档位于 `docs/` 目录：
+- 快速入门指南
+- 分步构建教程
+- 烧录指南
+- 故障排查

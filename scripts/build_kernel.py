@@ -175,7 +175,7 @@ class KernelBuilder:
         return all_found
 
     def download_kernel(self) -> bool:
-        """Download kernel source code.
+        """Download kernel source code with retry mechanism.
 
         Returns:
             True if successful
@@ -194,24 +194,45 @@ class KernelBuilder:
         print(f"  Destination: {self.kernel_dir}")
         print()
 
-        start_time = time.time()
-        rc, stdout, stderr = self.run_command([
-            "git", "clone",
-            "--depth=1",
-            "--branch", self.KERNEL_BRANCH,
-            self.KERNEL_REPO,
-            str(self.kernel_dir)
-        ], check=False)
+        # Try up to 3 times with retry
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            if attempt > 1:
+                print(f"\n{Colors.YELLOW}Retry attempt {attempt}/{max_retries}...{Colors.NC}")
+                # Clean up partial clone on retry
+                if self.kernel_dir.exists():
+                    import shutil
+                    shutil.rmtree(self.kernel_dir)
 
-        elapsed = time.time() - start_time
+            start_time = time.time()
+            rc, stdout, stderr = self.run_command([
+                "git", "clone",
+                "--depth=1",
+                "--branch", self.KERNEL_BRANCH,
+                self.KERNEL_REPO,
+                str(self.kernel_dir)
+            ], check=False)
 
-        if rc == 0:
-            print_success(f"Kernel downloaded successfully ({elapsed:.1f}s)")
-            return True
-        else:
-            print_error(f"Failed to download kernel")
-            print(f"Error: {stderr}")
-            return False
+            elapsed = time.time() - start_time
+
+            if rc == 0:
+                print_success(f"Kernel downloaded successfully ({elapsed:.1f}s)")
+                return True
+            else:
+                if attempt < max_retries:
+                    print_error(f"Download failed (attempt {attempt}/{max_retries})")
+                    print(f"Error: {stderr}")
+                else:
+                    print_error(f"Failed to download kernel after {max_retries} attempts")
+                    print(f"Error: {stderr}")
+                    print()
+                    print(f"{Colors.YELLOW}Troubleshooting:{Colors.NC}")
+                    print(f"  1. Check network connection")
+                    print(f"  2. Try manual clone:")
+                    print(f"     git clone --depth=1 {self.KERNEL_REPO} components/kernel")
+                    print(f"  3. Then run: python3 scripts/build_all.py --skip-download")
+
+        return False
 
     def get_toolchain_prefix(self) -> str:
         """Get the cross-compiler prefix path.
@@ -320,6 +341,52 @@ class KernelBuilder:
             print_error(f"Compilation error: {e}")
             return False
 
+    def fix_orangepi_makefile(self) -> bool:
+        """Fix Makefile to include Orange Pi device tree builds.
+
+        The OrangePi DTB sources are present but the Makefile was not updated
+        to compile them. This function adds the necessary rules.
+
+        Returns:
+            True if successful or already fixed
+        """
+        makefile_path = self.kernel_dir / "arch/arm64/boot/dts/rockchip/Makefile"
+
+        if not makefile_path.exists():
+            print_error(f"Makefile not found: {makefile_path}")
+            return False
+
+        # Read the Makefile
+        with open(makefile_path, 'r') as f:
+            content = f.read()
+
+        # Check if Orange Pi DTB rules already exist
+        if "rk3399-orangepi-4.dtb" in content:
+            print_success("Orange Pi DTB rules already in Makefile")
+            return True
+
+        # Add Orange Pi DTB rules before rk3399-rock960
+        # Find the insertion point
+        insertion_marker = "dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-rock960-ab.dtb"
+
+        if insertion_marker not in content:
+            print_warning("Could not find insertion point in Makefile (DTB compilation may still work)")
+            return True
+
+        orangepi_rules = """dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-orangepi.dtb
+dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-orangepi-4.dtb
+dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-orangepi-rk3399.dtb
+"""
+
+        new_content = content.replace(insertion_marker, orangepi_rules + insertion_marker)
+
+        # Write the modified Makefile
+        with open(makefile_path, 'w') as f:
+            f.write(new_content)
+
+        print_success("Orange Pi DTB rules added to Makefile")
+        return True
+
     def compile_dtbs(self) -> bool:
         """Compile device tree blobs.
 
@@ -327,6 +394,10 @@ class KernelBuilder:
             True if successful
         """
         self.log_step(5, "Compiling device tree blobs")
+
+        # Fix Makefile to include Orange Pi DTBs before compiling
+        if not self.fix_orangepi_makefile():
+            print_warning("Failed to fix Makefile, continuing anyway...")
 
         cross_compile = self.get_toolchain_prefix()
         env = os.environ.copy()
@@ -383,13 +454,67 @@ class KernelBuilder:
             print_warning(f"Module compilation warning (continuing): {e}")
             return True
 
+    def install_modules(self) -> bool:
+        """Install kernel modules to components/kernel/modules.
+
+        Returns:
+            True if successful
+        """
+        self.log_step(7, "Installing kernel modules")
+
+        # Module installation path
+        modules_install_path = self.project_root / "components" / "kernel" / "modules"
+
+        # Clean old modules if they exist
+        if modules_install_path.exists():
+            print(f"  Cleaning old modules at {modules_install_path}")
+            shutil.rmtree(modules_install_path)
+
+        modules_install_path.mkdir(parents=True, exist_ok=True)
+
+        cross_compile = self.get_toolchain_prefix()
+        env = os.environ.copy()
+        env["CROSS_COMPILE"] = cross_compile
+        env["ARCH"] = self.ARCH
+
+        try:
+            rc, stdout, stderr = self.run_command(
+                [
+                    "make",
+                    "modules_install",
+                    f"INSTALL_MOD_PATH={modules_install_path}"
+                ],
+                cwd=self.kernel_dir,
+                check=False,
+                env=env
+            )
+
+            if rc == 0:
+                # Check if modules were installed
+                modules_dir = modules_install_path / "lib" / "modules"
+                if modules_dir.exists():
+                    # Count installed modules
+                    module_count = sum(1 for _ in modules_dir.rglob("*.ko"))
+                    print_success(f"Kernel modules installed ({module_count} modules)")
+                    print(f"  Installation path: {modules_install_path}")
+                    return True
+                else:
+                    print_warning("Modules directory not found after installation")
+                    return True
+            else:
+                print_warning("Module installation had issues (continuing...)")
+                return True
+        except Exception as e:
+            print_warning(f"Module installation warning (continuing): {e}")
+            return True
+
     def copy_kernel_image(self) -> bool:
         """Copy compiled kernel image to output directory.
 
         Returns:
             True if successful
         """
-        self.log_step(7, "Copying kernel image to output")
+        self.log_step(8, "Copying kernel image to output")
 
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -417,7 +542,7 @@ class KernelBuilder:
         Returns:
             True if successful
         """
-        self.log_step(8, "Copying device tree blobs to output")
+        self.log_step(9, "Copying device tree blobs to output")
 
         dts_dir = self.kernel_dir / "arch" / self.ARCH / "boot" / "dts"
 
@@ -543,6 +668,8 @@ class KernelBuilder:
         if not skip_modules:
             if not self.compile_modules():
                 return False
+            if not self.install_modules():
+                return False
 
         if not self.copy_kernel_image():
             return False
@@ -558,6 +685,10 @@ class KernelBuilder:
         print(f"  ✓ Image")
         print(f"  ✓ dtbs/")
         print(f"  ✓ System.map")
+        if not skip_modules:
+            modules_path = self.project_root / "components" / "kernel" / "modules"
+            if modules_path.exists():
+                print(f"  ✓ modules/ (installed to components/kernel/modules)")
 
         return True
 

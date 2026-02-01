@@ -173,7 +173,7 @@ class UBootBuilder:
         return all_found
 
     def download_uboot(self) -> bool:
-        """Download U-Boot source code.
+        """Download U-Boot source code with retry mechanism.
 
         Returns:
             True if successful
@@ -192,24 +192,45 @@ class UBootBuilder:
         print(f"  Destination: {self.uboot_dir}")
         print()
 
-        start_time = time.time()
-        rc, stdout, stderr = self.run_command([
-            "git", "clone",
-            "--depth=1",
-            "--branch", self.UBOOT_BRANCH,
-            self.UBOOT_REPO,
-            str(self.uboot_dir)
-        ], check=False)
+        # Try up to 3 times with retry
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            if attempt > 1:
+                print(f"\n{Colors.YELLOW}Retry attempt {attempt}/{max_retries}...{Colors.NC}")
+                # Clean up partial clone on retry
+                if self.uboot_dir.exists():
+                    import shutil
+                    shutil.rmtree(self.uboot_dir)
 
-        elapsed = time.time() - start_time
+            start_time = time.time()
+            rc, stdout, stderr = self.run_command([
+                "git", "clone",
+                "--depth=1",
+                "--branch", self.UBOOT_BRANCH,
+                self.UBOOT_REPO,
+                str(self.uboot_dir)
+            ], check=False)
 
-        if rc == 0:
-            print_success(f"U-Boot downloaded successfully ({elapsed:.1f}s)")
-            return True
-        else:
-            print_error(f"Failed to download U-Boot")
-            print(f"Error: {stderr}")
-            return False
+            elapsed = time.time() - start_time
+
+            if rc == 0:
+                print_success(f"U-Boot downloaded successfully ({elapsed:.1f}s)")
+                return True
+            else:
+                if attempt < max_retries:
+                    print_error(f"Download failed (attempt {attempt}/{max_retries})")
+                    print(f"Error: {stderr}")
+                else:
+                    print_error(f"Failed to download U-Boot after {max_retries} attempts")
+                    print(f"Error: {stderr}")
+                    print()
+                    print(f"{Colors.YELLOW}Troubleshooting:{Colors.NC}")
+                    print(f"  1. Check network connection")
+                    print(f"  2. Try manual clone:")
+                    print(f"     git clone --depth=1 {self.UBOOT_REPO} components/uboot")
+                    print(f"  3. Then run: python3 scripts/build_all.py --skip-download")
+
+        return False
 
     def download_toolchain(self) -> bool:
         """Download ARM toolchain if needed.
@@ -257,36 +278,52 @@ class UBootBuilder:
 
         self.toolchain_dir.parent.mkdir(parents=True, exist_ok=True)
 
-        start_time = time.time()
-        rc, stdout, stderr = self.run_command([
-            "git", "clone",
-            "--depth=1",
-            "--branch", self.TOOLCHAIN_BRANCH,
-            self.TOOLCHAIN_REPO,
-            str(self.toolchain_dir)
-        ], check=False)
+        # Try up to 3 times with retry
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            if attempt > 1:
+                print(f"\n{Colors.YELLOW}Retry attempt {attempt}/{max_retries}...{Colors.NC}")
+                # Clean up partial clone on retry
+                if self.toolchain_dir.exists():
+                    import shutil
+                    shutil.rmtree(self.toolchain_dir)
 
-        elapsed = time.time() - start_time
+            start_time = time.time()
+            rc, stdout, stderr = self.run_command([
+                "git", "clone",
+                "--depth=1",
+                "--branch", self.TOOLCHAIN_BRANCH,
+                self.TOOLCHAIN_REPO,
+                str(self.toolchain_dir)
+            ], check=False)
 
-        if rc == 0:
-            # Verify the download
-            if gcc_path.exists():
-                print_success(f"Linaro GCC 6.3.1 downloaded successfully ({elapsed:.1f}s)")
-                # Make executables
-                import stat
-                for exe in (linaro_gcc / "bin").glob("*"):
-                    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
-                return True
+            elapsed = time.time() - start_time
+
+            if rc == 0:
+                # Verify the download
+                if gcc_path.exists():
+                    print_success(f"Linaro GCC 6.3.1 downloaded successfully ({elapsed:.1f}s)")
+                    # Make executables
+                    import stat
+                    for exe in (linaro_gcc / "bin").glob("*"):
+                        exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+                    return True
+                else:
+                    print_error("Download succeeded but toolchain structure unexpected")
+                    return False
             else:
-                print_error("Download succeeded but toolchain structure unexpected")
-                return False
-        else:
-            print_error("Failed to download toolchain")
-            print(f"Error: {stderr}")
-            print()
-            print_warning("You can manually install the system toolchain:")
-            print("  sudo apt-get install gcc-aarch64-linux-gnu")
-            return False
+                if attempt < max_retries:
+                    print_error(f"Download failed (attempt {attempt}/{max_retries})")
+                    print(f"Error: {stderr}")
+                else:
+                    print_error(f"Failed to download toolchain after {max_retries} attempts")
+                    print(f"Error: {stderr}")
+                    print()
+                    print(f"{Colors.YELLOW}Alternatives:{Colors.NC}")
+                    print(f"  1. Install system toolchain: sudo apt-get install gcc-aarch64-linux-gnu")
+                    print(f"  2. Manual download: git clone --depth=1 {self.TOOLCHAIN_REPO} components/toolchain")
+
+        return False
 
     def get_toolchain_prefix(self) -> str:
         """Get the toolchain prefix for CROSS_COMPILE.

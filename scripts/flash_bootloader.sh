@@ -212,6 +212,20 @@ else
     BOOT=""  # boot.img 不存在（可选）
 fi
 
+# rootfs - 可以是目录或已打包的镜像
+# 优先级：build/rootfs.img > build/rootfs/
+ROOTFS=""
+ROOTFS_IMG=""
+if [ -f "$PROJECT_ROOT/build/rootfs.img" ]; then
+    # 已存在打包好的镜像
+    ROOTFS_IMG="$PROJECT_ROOT/build/rootfs.img"
+    ROOTFS="existing"
+elif [ -d "$PROJECT_ROOT/build/rootfs" ]; then
+    # rootfs 目录存在，需要打包
+    ROOTFS="$PROJECT_ROOT/build/rootfs"
+    ROOTFS_IMG="$PROJECT_ROOT/build/rootfs.img"
+fi
+
 echo ""
 echo -e "${CYAN}========================================${NC}"
 echo -e "${CYAN}   RK3399 Bootloader 烧写工具${NC}"
@@ -256,6 +270,21 @@ if [ -n "$BOOT" ] && [ -f "$BOOT" ]; then
     echo -e "  ${GREEN}✓${NC} boot.img: ${SIZE_KB} KB (可选，kernel 镜像)"
 else
     echo -e "  ${YELLOW}⚠${NC} boot.img: 不存在 (可选，需要单独编译 kernel)"
+fi
+
+if [ -n "$ROOTFS" ]; then
+    if [ "$ROOTFS" = "existing" ]; then
+        SIZE=$(stat -c%s "$ROOTFS_IMG")
+        SIZE_MB=$((SIZE / 1024 / 1024))
+        echo -e "  ${GREEN}✓${NC} rootfs.img: ${SIZE_MB} MB (已存在)"
+    else
+        # 计算目录大小
+        SIZE=$(du -sb "$ROOTFS" 2>/dev/null | cut -f1)
+        SIZE_MB=$((SIZE / 1024 / 1024))
+        echo -e "  ${GREEN}✓${NC} rootfs: ${SIZE_MB} MB (目录，将自动打包)"
+    fi
+else
+    echo -e "  ${YELLOW}⚠${NC} rootfs: 不存在 (可选，无法启动到完整系统)"
 fi
 
 if [ "$ALL_EXIST" = false ]; then
@@ -320,10 +349,11 @@ fi
 # 确认烧写
 echo ""
 echo -e "${CYAN}========================================${NC}"
-echo -e "${YELLOW}${BOLD}⚠️  警告: 此操作将覆写设备上的 bootloader 区域！${NC}"
+echo -e "${YELLOW}${BOLD}⚠️  警告: 此操作将重新分区并覆写设备！${NC}"
 echo -e "${CYAN}========================================${NC}"
-echo "将要烧写到 $DEVICE:"
+echo "将要执行以下操作到 $DEVICE:"
 echo ""
+echo -e "  ${CYAN}[0]${NC} 创建 GPT 分区表 (会清除现有分区表)"
 echo -e "  ${CYAN}[1]${NC} idbloader.img → 扇区 $LOADER1_START (偏移 $((LOADER1_START * 512 / 1024)) KB)"
 echo -e "  ${CYAN}[2]${NC} uboot.img     → 扇区 $UBOOT_START (偏移 $((UBOOT_START * 512 / 1024 / 1024)) MB)"
 if [ -n "$TRUST" ] && [ -f "$TRUST" ]; then
@@ -332,9 +362,12 @@ fi
 if [ -n "$BOOT" ] && [ -f "$BOOT" ]; then
     echo -e "  ${CYAN}[4]${NC} boot.img      → 扇区 $BOOT_START (偏移 $((BOOT_START * 512 / 1024 / 1024)) MB)"
 fi
+if [ -n "$ROOTFS" ]; then
+    echo -e "  ${CYAN}[5]${NC} rootfs        → 分区 4 (rootfs 分区)"
+fi
 echo ""
-echo -e "${RED}${BOLD}这将覆盖设备上的引导区域！${NC}"
-echo -e "${YELLOW}请确认设备路径正确无误${NC}"
+echo -e "${RED}${BOLD}这将重新创建分区表并覆盖引导区域！${NC}"
+echo -e "${YELLOW}请确认设备路径正确无误，现有数据将丢失${NC}"
 echo ""
 
 read -p "确认继续烧写? (输入 'yes' 继续): " CONFIRM
@@ -349,9 +382,54 @@ echo -e "${CYAN}========================================${NC}"
 echo -e "${CYAN}   开始烧写 Bootloader${NC}"
 echo -e "${CYAN}========================================${NC}"
 
+# 0. 创建 GPT 分区表
+echo ""
+echo -e "${CYAN}[0/5]${NC} 创建 GPT 分区表..."
+echo "  这将使 U-Boot 能够正确识别 boot 分区"
+
+# 检查是否安装了 parted
+if ! command -v parted &> /dev/null; then
+    echo -e "${RED}  ✗ 错误: 未安装 parted 工具${NC}"
+    echo "  请安装: sudo apt-get install parted"
+    exit 1
+fi
+
+# 定义分区结束位置
+UBOOT_END=32767
+TRUST_END=40959
+BOOT_END=114687
+
+# 创建 GPT 分区表和分区
+echo "  正在创建 GPT 标签..."
+if ! parted -s $DEVICE mklabel gpt 2>&1; then
+    echo -e "${RED}  ✗ 创建 GPT 标签失败${NC}"
+    exit 1
+fi
+
+echo "  正在创建 uboot 分区 (${UBOOT_START}-${UBOOT_END})..."
+parted -s $DEVICE unit s mkpart uboot ${UBOOT_START} ${UBOOT_END} 2>&1 || true
+
+echo "  正在创建 trust 分区 (${TRUST_START}-${TRUST_END})..."
+parted -s $DEVICE unit s mkpart trust ${TRUST_START} ${TRUST_END} 2>&1 || true
+
+echo "  正在创建 boot 分区 (${BOOT_START}-${BOOT_END})..."
+parted -s $DEVICE unit s mkpart boot ${BOOT_START} ${BOOT_END} 2>&1 || true
+
+echo "  正在创建 rootfs 分区 (376832-末尾)..."
+parted -s $DEVICE -- unit s mkpart rootfs 376832 -34s 2>&1 || true
+
+# 同步分区表
+partprobe $DEVICE 2>/dev/null || true
+sleep 1
+
+echo -e "${GREEN}  ✓ GPT 分区表创建成功${NC}"
+echo ""
+echo "分区布局:"
+parted -s $DEVICE unit s print 2>&1 | grep -E "^\s*[0-9]|^Disk|^Sector" || true
+
 # 1. 烧写 idbloader
 echo ""
-echo -e "${CYAN}[1/2]${NC} 烧写 idbloader.img..."
+echo -e "${CYAN}[1/5]${NC} 烧写 idbloader.img..."
 echo "  源文件: $IDBLOADER"
 echo "  目标: $DEVICE (扇区 $LOADER1_START)"
 if dd if=$IDBLOADER of=$DEVICE seek=$LOADER1_START conv=notrunc,fsync bs=512 status=progress 2>&1; then
@@ -363,7 +441,7 @@ fi
 
 # 2. 烧写 uboot
 echo ""
-echo -e "${CYAN}[2/2]${NC} 烧写 uboot.img..."
+echo -e "${CYAN}[2/5]${NC} 烧写 uboot.img..."
 echo "  源文件: $UBOOT"
 echo "  目标: $DEVICE (扇区 $UBOOT_START)"
 if dd if=$UBOOT of=$DEVICE seek=$UBOOT_START conv=notrunc,fsync bs=512 status=progress 2>&1; then
@@ -376,7 +454,7 @@ fi
 # 3. 烧写 trust (如果存在)
 if [ -n "$TRUST" ] && [ -f "$TRUST" ]; then
     echo ""
-    echo -e "${CYAN}[3/3]${NC} 烧写 trust.img (可选)..."
+    echo -e "${CYAN}[3/5]${NC} 烧写 trust.img (可选)..."
     echo "  源文件: $TRUST"
     echo "  目标: $DEVICE (扇区 $TRUST_START)"
     if dd if=$TRUST of=$DEVICE seek=$TRUST_START conv=notrunc,fsync bs=512 status=progress 2>&1; then
@@ -389,7 +467,7 @@ fi
 # 4. 烧写 boot (kernel, 如果存在)
 if [ -n "$BOOT" ] && [ -f "$BOOT" ]; then
     echo ""
-    echo -e "${CYAN}[4/4]${NC} 烧写 boot.img (kernel，可选)..."
+    echo -e "${CYAN}[4/5]${NC} 烧写 boot.img (kernel，可选)..."
     echo "  源文件: $BOOT"
     echo "  目标: $DEVICE (扇区 $BOOT_START)"
     if dd if=$BOOT of=$DEVICE seek=$BOOT_START conv=notrunc,fsync bs=512 status=progress 2>&1; then
@@ -399,17 +477,177 @@ if [ -n "$BOOT" ] && [ -f "$BOOT" ]; then
     fi
 fi
 
+# 5. 烧写 rootfs (如果存在)
+if [ -n "$ROOTFS" ]; then
+    echo ""
+    echo -e "${CYAN}[5/6]${NC} 准备并烧写 rootfs..."
+
+    # 确定 rootfs 分区
+    ROOTFS_PARTITION=""
+    if [[ "$DEVICE" == *"mmcblk"* ]] || [[ "$DEVICE" == *"loop"* ]]; then
+        # SD 卡或 eMMC 设备（如 /dev/mmcblk0）
+        ROOTFS_PARTITION="${DEVICE}p4"
+    else
+        # USB 设备（如 /dev/sdb）
+        ROOTFS_PARTITION="${DEVICE}4"
+    fi
+
+    # 等待分区设备出现
+    echo "  等待分区设备准备就绪..."
+    partprobe $DEVICE 2>/dev/null || true
+    sleep 2
+
+    if [ ! -e "$ROOTFS_PARTITION" ]; then
+        echo -e "${RED}  ✗ 错误: rootfs 分区不存在: $ROOTFS_PARTITION${NC}"
+        echo "  请检查分区表是否正确创建"
+        exit 1
+    fi
+
+    # 格式化 rootfs 分区为 ext4
+    echo "  格式化 rootfs 分区为 ext4..."
+    if ! mkfs.ext4 -F -L "rootfs" "$ROOTFS_PARTITION" 2>&1 | grep -E "Creating filesystem|done"; then
+        echo -e "${RED}  ✗ 格式化分区失败${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  ✓ 分区格式化成功${NC}"
+
+    # 根据 rootfs 类型选择不同的烧写方式
+    if [ "$ROOTFS" = "existing" ]; then
+        # 方式 1: 已存在 rootfs.img，直接 dd 写入分区（无需 loop 设备）
+        echo ""
+        echo "  正在直接写入 rootfs 镜像到分区..."
+        echo "  源文件: $ROOTFS_IMG"
+        echo "  目标分区: $ROOTFS_PARTITION"
+        echo "  这可能需要几分钟，请耐心等待..."
+
+        if ! dd if="$ROOTFS_IMG" of="$ROOTFS_PARTITION" bs=4M status=progress conv=fsync 2>&1; then
+            echo -e "${RED}  ✗ 写入 rootfs 镜像失败${NC}"
+            exit 1
+        fi
+
+        echo -e "${GREEN}  ✓ rootfs 镜像写入成功${NC}"
+    else
+        # 方式 2: rootfs 是目录，直接复制到分区（只需 1 个 loop 设备挂载分区）
+        echo ""
+        echo "  源目录: $ROOTFS"
+        echo "  目标分区: $ROOTFS_PARTITION"
+
+        # 计算目录大小
+        ROOTFS_SIZE=$(du -sm "$ROOTFS" 2>/dev/null | cut -f1)
+        echo "  rootfs 目录大小: ${ROOTFS_SIZE} MB"
+
+        # 挂载分区
+        echo "  挂载 rootfs 分区..."
+        MOUNT_POINT=$(mktemp -d)
+
+        if ! mount "$ROOTFS_PARTITION" "$MOUNT_POINT" 2>&1; then
+            echo -e "${RED}  ✗ 挂载 rootfs 分区失败${NC}"
+            rmdir "$MOUNT_POINT"
+            exit 1
+        fi
+
+        # 直接从 rootfs 目录复制到分区
+        # 排除虚拟文件系统和挂载点，避免复制 /proc/kcore 等虚拟文件
+        echo "  正在复制 rootfs 文件到分区..."
+        echo "  这可能需要几分钟，请耐心等待..."
+
+        if ! rsync -aAX --info=progress2 \
+            --exclude='/proc/*' \
+            --exclude='/sys/*' \
+            --exclude='/dev/*' \
+            --exclude='/tmp/*' \
+            --exclude='/run/*' \
+            --exclude='/mnt/*' \
+            --exclude='/media/*' \
+            "$ROOTFS/" "$MOUNT_POINT/" 2>&1; then
+            echo -e "${RED}  ✗ 复制文件失败${NC}"
+            umount "$MOUNT_POINT"
+            rmdir "$MOUNT_POINT"
+            exit 1
+        fi
+
+        # 确保虚拟文件系统的挂载点目录存在（空目录）
+        echo "  创建虚拟文件系统挂载点..."
+        mkdir -p "$MOUNT_POINT"/{proc,sys,dev,tmp,run,mnt,media}
+
+        # 卸载分区
+        sync
+        umount "$MOUNT_POINT"
+        rmdir "$MOUNT_POINT"
+
+        echo -e "${GREEN}  ✓ rootfs 复制成功${NC}"
+
+        # 可选：保存 rootfs.img 以便后续使用
+        echo ""
+        echo "  提示: 可以创建 rootfs.img 镜像文件以便后续快速烧写"
+        read -p "  是否创建 rootfs.img? (y/n，默认 n): " CREATE_IMG
+        if [ "$CREATE_IMG" = "y" ] || [ "$CREATE_IMG" = "Y" ]; then
+            echo "  正在从分区创建 rootfs.img..."
+
+            # 重新挂载分区（只读）
+            MOUNT_POINT=$(mktemp -d)
+            if mount -o ro "$ROOTFS_PARTITION" "$MOUNT_POINT" 2>&1; then
+                # 计算实际使用大小
+                USED_SIZE=$(df -m "$MOUNT_POINT" | tail -1 | awk '{print $3}')
+                IMG_SIZE=$((USED_SIZE + 100))  # 增加 100MB 余量
+
+                echo "  创建 ${IMG_SIZE}MB 的镜像文件..."
+                if dd if=/dev/zero of="$ROOTFS_IMG" bs=1M count=$IMG_SIZE status=progress 2>&1 &&
+                   mkfs.ext4 -F -L "rootfs" "$ROOTFS_IMG" 2>&1 | grep -q "done"; then
+
+                    # 挂载镜像并复制
+                    IMG_MOUNT=$(mktemp -d)
+                    if mount -o loop "$ROOTFS_IMG" "$IMG_MOUNT" 2>&1; then
+                        rsync -aAX --info=progress2 "$MOUNT_POINT/" "$IMG_MOUNT/" 2>&1
+                        sync
+                        umount "$IMG_MOUNT"
+                        rmdir "$IMG_MOUNT"
+                        echo -e "${GREEN}  ✓ rootfs.img 创建成功: $ROOTFS_IMG${NC}"
+                    else
+                        echo -e "${YELLOW}  ⚠ 挂载镜像失败，跳过创建${NC}"
+                        rm -f "$ROOTFS_IMG"
+                    fi
+                else
+                    echo -e "${YELLOW}  ⚠ 创建镜像失败，跳过${NC}"
+                fi
+
+                umount "$MOUNT_POINT"
+                rmdir "$MOUNT_POINT"
+            else
+                echo -e "${YELLOW}  ⚠ 无法重新挂载分区，跳过镜像创建${NC}"
+            fi
+        fi
+    fi
+fi
+
 # 同步到磁盘
 echo ""
-echo "正在同步数据到磁盘..."
+echo -e "${CYAN}[6/6]${NC} 正在同步数据到磁盘..."
 sync
 echo -e "${GREEN}✓ 数据同步完成${NC}"
 
 # 完成
 echo ""
 echo -e "${CYAN}========================================${NC}"
-echo -e "${GREEN}${BOLD}✓ 所有 Bootloader 组件烧写完成！${NC}"
+if [ -n "$ROOTFS" ]; then
+    echo -e "${GREEN}${BOLD}✓ 完整系统烧写完成！${NC}"
+else
+    echo -e "${GREEN}${BOLD}✓ Bootloader 组件烧写完成！${NC}"
+fi
 echo -e "${CYAN}========================================${NC}"
+echo ""
+echo -e "${BOLD}烧写内容:${NC}"
+echo -e "  ${GREEN}✓${NC} idbloader.img (DDR + miniloader)"
+echo -e "  ${GREEN}✓${NC} uboot.img (U-Boot)"
+if [ -n "$TRUST" ] && [ -f "$TRUST" ]; then
+    echo -e "  ${GREEN}✓${NC} trust.img (ATF + OP-TEE)"
+fi
+if [ -n "$BOOT" ] && [ -f "$BOOT" ]; then
+    echo -e "  ${GREEN}✓${NC} boot.img (Linux Kernel)"
+fi
+if [ -n "$ROOTFS" ]; then
+    echo -e "  ${GREEN}✓${NC} rootfs (根文件系统)"
+fi
 echo ""
 echo -e "${BOLD}下一步操作:${NC}"
 echo -e "  ${CYAN}1.${NC} 安全弹出 SD 卡"
@@ -424,11 +662,15 @@ echo ""
 echo -e "${GREEN}提示:${NC}"
 echo "  - 如果无法启动，检查串口输出"
 echo "  - 确认 SD 卡插入正确（金属触点朝下）"
-if [ -z "$BOOT" ] || [ ! -f "$BOOT" ]; then
+if [ -n "$ROOTFS" ]; then
+    echo "  - 完整系统已烧写，可以直接启动到桌面"
+    echo "  - 默认用户: orangepi / orangepi"
+    echo "  - Root 密码: orangepi"
+elif [ -n "$BOOT" ] && [ -f "$BOOT" ]; then
+    echo "  - Kernel 已烧写，但缺少 rootfs"
+    echo "  - 编译 rootfs: sudo python3 scripts/build_rootfs.py"
+else
     echo "  - 如需完整系统，需要编译 kernel 并烧写 boot.img"
     echo "    参考: python3 scripts/build_all.py"
-else
-    echo "  - Kernel 已烧写，SD 卡可以直接启动"
-    echo "  - 如需完整系统，还需烧写 rootfs 分区"
 fi
 echo ""
