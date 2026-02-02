@@ -20,7 +20,6 @@
 - ✅ **Device Tree 自动修复** - 自动修复 OrangePi DTS 编译问题
 - ✅ **智能清理** - 保留源码或完全重置
 - ✅ **纯 Python 工具链** - 无需官方 C 编译工具
-- ✅ **跨平台支持** - Linux/macOS/Windows
 
 ## 快速开始
 
@@ -372,26 +371,6 @@ ruff check src/ tests/
 # 代码格式化
 ruff format src/ tests/
 ```
-
-## 参与贡献
-
-欢迎贡献代码、报告问题或提出建议！
-
-### 如何贡献
-
-1. Fork 本仓库
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 提交 Pull Request
-
-### 需要帮助的方向
-
-- [ ] 完善测试用例覆盖率
-- [ ] 添加更多设备树支持
-- [ ] 优化 rootfs 构建速度
-- [ ] 实现 GPT 分区表支持
-- [ ] 添加 CI/CD 自动化测试
 
 ## 许可证
 
